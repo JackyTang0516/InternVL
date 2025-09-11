@@ -8,6 +8,9 @@ export CONTROLLER_PORT=40000
 export CONTROLLER_URL=http://0.0.0.0:$CONTROLLER_PORT
 export SD_WORKER_URL=http://0.0.0.0:$SD_SERVER_PORT
 
+# 设置最大图像限制，可以通过命令行参数覆盖
+MAX_IMAGE_LIMIT=${1:-1000}  # 默认1000，可以通过第一个参数覆盖
+
 # 进入streamlit_demo目录
 cd streamlit_demo
 
@@ -16,6 +19,7 @@ echo "控制器端口: $CONTROLLER_PORT"
 echo "模型工作器端口: 40001"
 echo "Web服务器端口: $WEB_SERVER_PORT"
 echo "SD服务器端口: $SD_SERVER_PORT"
+echo "最大图像限制: $MAX_IMAGE_LIMIT"
 echo ""
 
 # 检查设备支持情况
@@ -51,7 +55,7 @@ sleep 5
 
 # 启动Streamlit应用
 echo "3. 启动Streamlit应用..."
-streamlit run app.py --server.port $WEB_SERVER_PORT --server.address 0.0.0.0 -- --controller_url $CONTROLLER_URL --max_image_limit 64 &
+streamlit run app.py --server.port $WEB_SERVER_PORT --server.address 0.0.0.0 -- --controller_url $CONTROLLER_URL --max_image_limit $MAX_IMAGE_LIMIT &
 STREAMLIT_PID=$!
 echo "Streamlit应用已启动，PID: $STREAMLIT_PID"
 
@@ -60,6 +64,12 @@ echo "=== 所有服务已启动 ==="
 echo "控制器: http://0.0.0.0:$CONTROLLER_PORT"
 echo "模型工作器: http://0.0.0.0:40001"
 echo "Streamlit应用: http://0.0.0.0:$WEB_SERVER_PORT"
+echo "最大图像限制: $MAX_IMAGE_LIMIT"
+echo ""
+echo "使用说明:"
+echo "  ./start_services.sh [最大图像限制]"
+echo "  例如: ./start_services.sh 2000  # 设置最大图像限制为2000"
+echo "  默认最大图像限制: 1000"
 echo ""
 echo "按 Ctrl+C 停止所有服务"
 

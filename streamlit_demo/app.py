@@ -64,24 +64,93 @@ def load_upload_file_and_show():
             ext = os.path.splitext(name)[1].lower()
             return (mime_type and mime_type.startswith('video')) or (ext in video_exts)
 
-        def extract_video_frames_to_pil(tmp_video_path, max_frames):
+        def extract_video_frames_to_pil(tmp_video_path, max_frames=None):
             cap = cv2.VideoCapture(tmp_video_path)
             if not cap.isOpened():
                 return []
             total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = cap.get(cv2.CAP_PROP_FPS)
             if total <= 0:
                 total = 1
-            n = max(1, min(max_frames, total))
-            ids = np.linspace(0, total - 1, n, dtype=np.int32)
-            frames = []
-            cur_idx = 0
-            for fid in ids:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, int(fid))
-                ok, frame = cap.read()
-                if ok and frame is not None:
-                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    frames.append(Image.fromarray(rgb))
-                cur_idx += 1
+            if fps <= 0:
+                fps = 1
+            
+            # 智能关键帧选择策略
+            if max_frames is None:
+                # 完全动态选择：根据视频长度和内容智能决定
+                duration = total / fps
+                
+                if total <= 30:
+                    # 短视频：抽取所有帧
+                    target_frames = total
+                elif duration <= 5:
+                    # 5秒内：每0.1秒一帧
+                    target_frames = min(total, int(duration * 10))
+                elif duration <= 30:
+                    # 30秒内：每0.2秒一帧
+                    target_frames = min(total, int(duration * 5))
+                elif duration <= 120:
+                    # 2分钟内：每0.5秒一帧
+                    target_frames = min(total, int(duration * 2))
+                else:
+                    # 长视频：每1秒一帧，不设置上限
+                    target_frames = int(duration)
+                
+                # 使用智能采样选择关键帧
+                if target_frames >= total:
+                    # 抽取所有帧
+                    frames = []
+                    while True:
+                        ok, frame = cap.read()
+                        if not ok or frame is None:
+                            break
+                        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        frames.append(Image.fromarray(rgb))
+                else:
+                    # 智能关键帧选择：选择变化最大的帧
+                    frames = []
+                    frame_indices = []
+                    
+                    # 先均匀采样候选帧
+                    candidate_indices = np.linspace(0, total - 1, min(target_frames * 3, total), dtype=int)
+                    
+                    # 计算帧间差异，选择变化最大的帧
+                    prev_frame = None
+                    frame_diffs = []
+                    
+                    for idx in candidate_indices:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                        ok, frame = cap.read()
+                        if ok and frame is not None:
+                            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                            if prev_frame is not None:
+                                diff = cv2.absdiff(gray, prev_frame)
+                                frame_diffs.append((idx, np.mean(diff)))
+                            prev_frame = gray
+                    
+                    # 选择差异最大的帧
+                    frame_diffs.sort(key=lambda x: x[1], reverse=True)
+                    selected_indices = [x[0] for x in frame_diffs[:target_frames]]
+                    selected_indices.sort()
+                    
+                    # 提取选中的帧
+                    for idx in selected_indices:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                        ok, frame = cap.read()
+                        if ok and frame is not None:
+                            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            frames.append(Image.fromarray(rgb))
+            else:
+                # 如果指定了max_frames，使用均匀采样
+                n = max(1, min(max_frames, total))
+                ids = np.linspace(0, total - 1, n, dtype=np.int32)
+                frames = []
+                for fid in ids:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, int(fid))
+                    ok, frame = cap.read()
+                    if ok and frame is not None:
+                        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        frames.append(Image.fromarray(rgb))
             cap.release()
             return frames
 
@@ -98,16 +167,31 @@ def load_upload_file_and_show():
             file_bytes_raw = file.read()
             if is_video_file(getattr(file, 'name', ''), getattr(file, 'type', '')):
                 # 使用系统临时文件进行抽帧，文件会在关闭后自动删除，不落盘到项目目录
-                remaining_quota = max(1, max(0, max_image_limit - used_images - len(images)))
-                # 三重约束：用户选择上限 ∧ 剩余配额 ∧ 实际视频总帧数（在函数中处理）
-                try:
-                    max_frames_to_sample = max(1, min(video_max_frames, remaining_quota))
-                except NameError:
-                    max_frames_to_sample = remaining_quota
                 with tempfile.NamedTemporaryFile(suffix=os.path.splitext(getattr(file, 'name', 'video.mp4'))[1] or '.mp4', delete=True) as tf:
                     tf.write(file_bytes_raw)
                     tf.flush()
-                    frames = extract_video_frames_to_pil(tf.name, max_frames=max_frames_to_sample)
+                    
+                    # 获取视频基本信息
+                    cap = cv2.VideoCapture(tf.name)
+                    if cap.isOpened():
+                        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                        fps = cap.get(cv2.CAP_PROP_FPS)
+                        duration = total_frames / fps if fps > 0 else 0
+                        cap.release()
+                    else:
+                        total_frames = 1
+                        fps = 1
+                        duration = 0
+                    
+                    # 完全动态的关键帧抽取：不受图像配额限制
+                    frames = extract_video_frames_to_pil(tf.name, max_frames=None)
+                    
+                    # 显示抽取信息
+                    if len(frames) == total_frames:
+                        st.info(f"🎬 短视频检测：抽取所有 {total_frames} 帧（时长：{duration:.1f}秒）")
+                    else:
+                        st.info(f"🎬 智能关键帧抽取：从 {total_frames} 帧中选择 {len(frames)} 个关键帧（时长：{duration:.1f}秒）")
+                        
                 images.extend(frames)
                 persist_flags.extend([False] * len(frames))
                 # 不记录视频文件路径，完全在临时文件中处理
@@ -351,9 +435,8 @@ with st.sidebar:
             max_length = st.slider('max_new_token', min_value=0, max_value=4096, value=1024, step=128)
             max_input_tiles = st.slider('max_input_tiles (control image resolution)', min_value=1, max_value=24,
                                         value=12, step=1)
-            video_max_frames = st.slider('video_max_frames (user-selected)', min_value=1, max_value=64,
-                                         value=min(1, max_image_limit), step=1,
-                                         help='Upper bound of frames sampled from a single video.')
+            st.info('🎥 视频帧抽取策略：系统将自动根据视频长度和内容智能决定抽取帧数')
+            st.caption('• 短视频（≤50帧）：抽取所有帧\n• 中等视频：根据配额智能抽取\n• 长视频：均匀采样以保持代表性')
         upload_image_preview = st.empty()
         uploaded_files = st.file_uploader('Upload files', accept_multiple_files=True,
                                           type=['png', 'jpg', 'jpeg', 'webp', 'mp4', 'mov', 'avi', 'mkv', 'webm'],
@@ -381,9 +464,8 @@ with st.sidebar:
             repetition_penalty = st.slider('重复惩罚', min_value=1.0, max_value=1.5, value=1.1, step=0.02)
             max_length = st.slider('最大输出长度', min_value=0, max_value=4096, value=1024, step=128)
             max_input_tiles = st.slider('最大图像块数 (控制图像分辨率)', min_value=1, max_value=24, value=12, step=1)
-            video_max_frames = st.slider('视频采样帧数（用户选择上限）', min_value=1, max_value=64,
-                                         value=min(24, max_image_limit), step=1,
-                                         help='单个视频最多采样的帧数上限，实际受剩余配额与视频总帧数约束。')
+            st.info('🎥 视频帧抽取策略：系统将自动根据视频长度和内容智能决定抽取帧数')
+            st.caption('• 短视频（≤50帧）：抽取所有帧\n• 中等视频：根据配额智能抽取\n• 长视频：均匀采样以保持代表性')
         upload_image_preview = st.empty()
         uploaded_files = st.file_uploader('上传文件', accept_multiple_files=True,
                                           type=['png', 'jpg', 'jpeg', 'webp', 'mp4', 'mov', 'avi', 'mkv', 'webm'],
