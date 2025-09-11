@@ -16,6 +16,7 @@ import sys
 # from streamlit_js_eval import streamlit_js_eval
 from functools import partial
 from io import BytesIO
+import tempfile
 
 import cv2
 import numpy as np
@@ -56,6 +57,8 @@ def get_model_list():
 def load_upload_file_and_show():
     if uploaded_files is not None:
         images, filenames = [], []
+        # 对每个加入的图像记录是否需要持久化到磁盘（普通图片：True；视频帧：False）
+        persist_flags = []
         video_exts = {'.mp4', '.mov', '.avi', '.mkv', '.webm'}
         def is_video_file(name, mime_type):
             ext = os.path.splitext(name)[1].lower()
@@ -94,27 +97,20 @@ def load_upload_file_and_show():
         for file in uploaded_files:
             file_bytes_raw = file.read()
             if is_video_file(getattr(file, 'name', ''), getattr(file, 'type', '')):
-                # 保存到临时视频文件
-                t = datetime.datetime.now()
-                temp_dir = os.path.join(LOGDIR, 'serve_videos', f'{t.year}-{t.month:02d}-{t.day:02d}')
-                os.makedirs(temp_dir, exist_ok=True)
-                video_hash = hashlib.md5(file_bytes_raw).hexdigest()
-                ext = os.path.splitext(getattr(file, 'name', 'video.mp4'))[1] or '.mp4'
-                tmp_video_path = os.path.join(temp_dir, f'{video_hash}{ext}')
-                if not os.path.isfile(tmp_video_path):
-                    with open(tmp_video_path, 'wb') as vf:
-                        vf.write(file_bytes_raw)
-                # 关键帧/均匀采样帧数，受前端最大图像数与用户滑块上限限制
+                # 使用系统临时文件进行抽帧，文件会在关闭后自动删除，不落盘到项目目录
                 remaining_quota = max(1, max(0, max_image_limit - used_images - len(images)))
                 # 三重约束：用户选择上限 ∧ 剩余配额 ∧ 实际视频总帧数（在函数中处理）
                 try:
                     max_frames_to_sample = max(1, min(video_max_frames, remaining_quota))
                 except NameError:
                     max_frames_to_sample = remaining_quota
-                frames = extract_video_frames_to_pil(tmp_video_path, max_frames=max_frames_to_sample)
+                with tempfile.NamedTemporaryFile(suffix=os.path.splitext(getattr(file, 'name', 'video.mp4'))[1] or '.mp4', delete=True) as tf:
+                    tf.write(file_bytes_raw)
+                    tf.flush()
+                    frames = extract_video_frames_to_pil(tf.name, max_frames=max_frames_to_sample)
                 images.extend(frames)
-                # 为了统一日志结构，这里不保存帧到磁盘（避免过多文件），仅记录视频路径
-                filenames.append(tmp_video_path)
+                persist_flags.extend([False] * len(frames))
+                # 不记录视频文件路径，完全在临时文件中处理
             else:
                 file_bytes = np.asarray(bytearray(file_bytes_raw), dtype=np.uint8)
                 img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
@@ -123,13 +119,16 @@ def load_upload_file_and_show():
                 img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 img = Image.fromarray(img)
                 images.append(img)
+                persist_flags.append(True)
         with upload_image_preview.container():
             Library(images)
-
-        image_hashes = [hashlib.md5(image.tobytes()).hexdigest() for image in images]
-        for image, hash in zip(images, image_hashes):
+        # 仅持久化普通上传图片；视频帧不落盘
+        for image, to_persist in zip(images, persist_flags):
+            if not to_persist:
+                continue
             t = datetime.datetime.now()
-            filename = os.path.join(LOGDIR, 'serve_images', f'{t.year}-{t.month:02d}-{t.day:02d}', f'{hash}.jpg')
+            img_hash = hashlib.md5(image.tobytes()).hexdigest()
+            filename = os.path.join(LOGDIR, 'serve_images', f'{t.year}-{t.month:02d}-{t.day:02d}', f'{img_hash}.jpg')
             filenames.append(filename)
             if not os.path.isfile(filename):
                 os.makedirs(os.path.dirname(filename), exist_ok=True)
