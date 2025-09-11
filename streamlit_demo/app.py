@@ -13,6 +13,8 @@ import os
 import random
 import re
 import sys
+import subprocess
+import urllib.parse
 # from streamlit_js_eval import streamlit_js_eval
 from functools import partial
 from io import BytesIO
@@ -54,11 +56,185 @@ def get_model_list():
     return models
 
 
+def is_video_url(url):
+    """检查是否为视频链接"""
+    video_patterns = [
+        r'(?:https?://)?(?:www\.)?youtube\.com/watch\?v=',
+        r'(?:https?://)?(?:www\.)?youtube\.com/shorts/',
+        r'(?:https?://)?youtu\.be/',
+        r'(?:https?://)?(?:www\.)?vimeo\.com/',
+        r'(?:https?://)?(?:www\.)?bilibili\.com/',
+        r'(?:https?://)?(?:www\.)?dailymotion\.com/',
+        r'(?:https?://)?(?:www\.)?twitch\.tv/',
+        r'\.mp4(?:\?.*)?$',
+        r'\.mov(?:\?.*)?$',
+        r'\.avi(?:\?.*)?$',
+        r'\.mkv(?:\?.*)?$',
+        r'\.webm(?:\?.*)?$',
+    ]
+    return any(re.search(pattern, url) for pattern in video_patterns)
+
+
+def get_video_info(url):
+    """获取视频信息而不下载"""
+    try:
+        cmd = [
+            'yt-dlp',
+            '--dump-json',
+            '--no-playlist',
+            url
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        
+        if result.returncode != 0:
+            raise Exception(f"获取视频信息失败: {result.stderr}")
+        
+        info = json.loads(result.stdout)
+        return info
+        
+    except subprocess.TimeoutExpired:
+        raise Exception("获取视频信息超时")
+    except Exception as e:
+        raise Exception(f"获取视频信息时出错: {str(e)}")
+
+
+def stream_video_frames(url):
+    """流式处理视频帧，不下载整个文件"""
+    try:
+        # 获取视频信息
+        with st.spinner('Getting video information...'):
+            video_info = get_video_info(url)
+        
+        duration = video_info.get('duration', 0)
+        title = video_info.get('title', 'Unknown')
+        
+        # 使用yt-dlp获取最佳视频流URL，然后用ffmpeg处理
+        with st.spinner('Getting video stream URL...'):
+            cmd = [
+                'yt-dlp',
+                '-f', 'best[height<=720]',  # 选择720p以下的视频流
+                '--get-url',
+                '--no-playlist',
+                url
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                raise Exception(f"获取视频流URL失败: {result.stderr}")
+            
+            stream_url = result.stdout.strip()
+            if not stream_url:
+                raise Exception("无法获取视频流URL")
+        
+        # 使用ffmpeg从流URL中提取帧
+        with st.spinner(f'Processing video: {title}...'):
+            # 根据视频长度决定采样率
+            if duration <= 30:
+                fps_filter = 'fps=2'  # 短视频：每秒2帧
+                max_frames = min(60, int(duration * 2))  # 最多60帧
+            elif duration <= 120:
+                fps_filter = 'fps=1'  # 中等视频：每秒1帧
+                max_frames = min(120, int(duration))  # 最多120帧
+            else:
+                fps_filter = 'fps=1'  # 长视频：每秒1帧，不设置上限
+                max_frames = int(duration)  # 根据时长动态设置
+            
+            cmd = [
+                'ffmpeg',
+                '-loglevel', 'error',  # 只显示错误信息，隐藏警告
+                '-i', stream_url,
+                '-vf', fps_filter,
+                '-f', 'image2pipe',
+                '-vcodec', 'png',
+                '-frames:v', str(max_frames),  # 动态设置帧数
+                '-'
+            ]
+            
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            frames = []
+            frame_count = 0
+            
+            # 使用更简单的方法读取PNG数据
+            try:
+                # 读取所有输出数据
+                stdout_data, stderr_data = process.communicate(timeout=60)
+                
+                # 隐藏ffmpeg的stderr输出，不显示警告信息
+                # if stderr_data:
+                #     st.warning(f"ffmpeg警告: {stderr_data.decode()[:200]}")
+                
+                if stdout_data:
+                    # 查找PNG文件头
+                    png_start = b'\x89PNG\r\n\x1a\n'
+                    png_end = b'IEND\xaeB`\x82'
+                    
+                    data = stdout_data
+                    start = 0
+                    
+                    while True:
+                        # 查找PNG开始标记
+                        png_start_pos = data.find(png_start, start)
+                        if png_start_pos == -1:
+                            break
+                        
+                        # 查找PNG结束标记
+                        png_end_pos = data.find(png_end, png_start_pos)
+                        if png_end_pos == -1:
+                            break
+                        
+                        # 提取PNG数据
+                        png_data = data[png_start_pos:png_end_pos + len(png_end)]
+                        
+                        try:
+                            img = Image.open(BytesIO(png_data))
+                            frames.append(img)
+                            frame_count += 1
+                            
+                            if frame_count >= max_frames:  # 使用动态帧数限制
+                                break
+                                
+                        except Exception as e:
+                            pass
+                        
+                        start = png_end_pos + len(png_end)
+                
+            except subprocess.TimeoutExpired:
+                process.kill()
+                st.warning("Video processing timeout")
+            except Exception as e:
+                st.warning(f"Error processing video frames: {str(e)}")
+        
+        if frames:
+            st.success(f"🎬 Video processing completed: Extracted {len(frames)} frames from {title} (Duration: {duration:.1f}s)")
+        else:
+            st.warning("Failed to extract frames from video, please check if the link is valid or try another video")
+        
+        return frames
+        
+    except Exception as e:
+        st.error(f"Error processing video: {str(e)}")
+        return []
+
+
+def process_video_url(url):
+    """处理视频链接 - 使用流式处理"""
+    return stream_video_frames(url)
+
+
 def load_upload_file_and_show():
+    images, filenames = [], []
+    # 对每个加入的图像记录是否需要持久化到磁盘（普通图片：True；视频帧：False）
+    persist_flags = []
+    
+    # 视频帧单独处理，不添加到images列表中
+    video_frames_for_ai = []
+    if 'video_frames' in st.session_state and st.session_state.video_frames:
+        video_frames_for_ai = st.session_state.video_frames.copy()
+    
+    # 处理上传的文件
     if uploaded_files is not None:
-        images, filenames = [], []
-        # 对每个加入的图像记录是否需要持久化到磁盘（普通图片：True；视频帧：False）
-        persist_flags = []
         video_exts = {'.mp4', '.mov', '.avi', '.mkv', '.webm'}
         def is_video_file(name, mime_type):
             ext = os.path.splitext(name)[1].lower()
@@ -188,9 +364,9 @@ def load_upload_file_and_show():
                     
                     # 显示抽取信息
                     if len(frames) == total_frames:
-                        st.info(f"🎬 短视频检测：抽取所有 {total_frames} 帧（时长：{duration:.1f}秒）")
+                        st.info(f"🎬 Short video detected: Extracted all {total_frames} frames (Duration: {duration:.1f}s)")
                     else:
-                        st.info(f"🎬 智能关键帧抽取：从 {total_frames} 帧中选择 {len(frames)} 个关键帧（时长：{duration:.1f}秒）")
+                        st.info(f"🎬 Smart keyframe extraction: Selected {len(frames)} keyframes from {total_frames} frames (Duration: {duration:.1f}s)")
                         
                 images.extend(frames)
                 persist_flags.extend([False] * len(frames))
@@ -204,8 +380,20 @@ def load_upload_file_and_show():
                 img = Image.fromarray(img)
                 images.append(img)
                 persist_flags.append(True)
-        with upload_image_preview.container():
-            Library(images)
+        # 只显示上传的文件，不显示YouTube视频帧预览
+        display_images = []
+        display_persist_flags = []
+        
+        # 分离上传文件和YouTube视频帧
+        for i, (image, to_persist) in enumerate(zip(images, persist_flags)):
+            if to_persist:  # 只显示需要持久化的图片（上传的文件）
+                display_images.append(image)
+                display_persist_flags.append(to_persist)
+        
+        if display_images:
+            with upload_image_preview.container():
+                Library(display_images)
+        
         # 仅持久化普通上传图片；视频帧不落盘
         for image, to_persist in zip(images, persist_flags):
             if not to_persist:
@@ -303,6 +491,11 @@ def pil_image_to_base64(image):
 def clear_chat_history():
     st.session_state.messages = []
     st.session_state['image_select'] = -1
+    # 清除视频帧
+    if 'video_frames' in st.session_state:
+        st.session_state.video_frames = []
+    if 'video_url' in st.session_state:
+        st.session_state.video_url = ''
 
 
 def clear_file_uploader():
@@ -319,19 +512,52 @@ def show_one_or_multiple_images(message, total_image_num, is_input=True):
     if 'image' in message:
         if is_input:
             total_image_num = total_image_num + len(message['image'])
-            if lan == 'English':
-                if len(message['image']) == 1 and total_image_num == 1:
-                    label = f"(In this conversation, {len(message['image'])} image was uploaded, {total_image_num} image in total)"
-                elif len(message['image']) == 1 and total_image_num > 1:
-                    label = f"(In this conversation, {len(message['image'])} image was uploaded, {total_image_num} images in total)"
-                else:
-                    label = f"(In this conversation, {len(message['image'])} images were uploaded, {total_image_num} images in total)"
+            
+            # 检查是否有视频帧
+            video_frames_count = 0
+            regular_images_count = 0
+            
+            if 'video_frames' in st.session_state and st.session_state.video_frames:
+                video_frames_count = len(st.session_state.video_frames)
+                regular_images_count = len(message['image']) - video_frames_count
             else:
-                label = f"(在本次对话中，上传了{len(message['image'])}张图片，总共上传了{total_image_num}张图片)"
-        upload_image_preview = st.empty()
-        with upload_image_preview.container():
-            Library(message['image'])
-        if is_input and len(message['image']) > 0:
+                regular_images_count = len(message['image'])
+            
+            if lan == 'English':
+                if video_frames_count > 0 and regular_images_count > 0:
+                    label = f"(In this conversation, {regular_images_count} image(s) uploaded, {video_frames_count} frames from video processed, {total_image_num} total)"
+                elif video_frames_count > 0:
+                    label = f"(In this conversation, {video_frames_count} frames from video processed, {total_image_num} total)"
+                elif regular_images_count == 1 and total_image_num == 1:
+                    label = f"(In this conversation, {regular_images_count} image was uploaded, {total_image_num} image in total)"
+                elif regular_images_count == 1 and total_image_num > 1:
+                    label = f"(In this conversation, {regular_images_count} image was uploaded, {total_image_num} images in total)"
+                else:
+                    label = f"(In this conversation, {regular_images_count} images were uploaded, {total_image_num} images in total)"
+            else:
+                if video_frames_count > 0 and regular_images_count > 0:
+                    label = f"(在本次对话中，上传了{regular_images_count}张图片，处理了{video_frames_count}帧视频，总共{total_image_num}张)"
+                elif video_frames_count > 0:
+                    label = f"(在本次对话中，处理了{video_frames_count}帧视频，总共{total_image_num}张)"
+                else:
+                    label = f"(在本次对话中，上传了{regular_images_count}张图片，总共上传了{total_image_num}张图片)"
+        
+        # 显示聊天记录中的图片（现在只包含用户上传的图片）
+        if message['image']:
+            upload_image_preview = st.empty()
+            with upload_image_preview.container():
+                Library(message['image'])
+        
+        # 如果有视频帧被处理，显示提示信息
+        if 'video_frames' in st.session_state and st.session_state.video_frames:
+            video_frames_count = len(st.session_state.video_frames)
+            if lan == 'English':
+                st.info(f"🎥 Video frames ({video_frames_count} frames) are being processed in the background")
+            else:
+                st.info(f"🎥 Video frames ({video_frames_count} frames) are being processed in the background")
+        
+        # 只在有上传的图片时显示标签，纯视频处理时不显示
+        if is_input and regular_images_count > 0:
             st.markdown(label)
 
 
@@ -435,12 +661,56 @@ with st.sidebar:
             max_length = st.slider('max_new_token', min_value=0, max_value=4096, value=1024, step=128)
             max_input_tiles = st.slider('max_input_tiles (control image resolution)', min_value=1, max_value=24,
                                         value=12, step=1)
-            st.info('🎥 视频帧抽取策略：系统将自动根据视频长度和内容智能决定抽取帧数')
-            st.caption('• 短视频（≤50帧）：抽取所有帧\n• 中等视频：根据配额智能抽取\n• 长视频：均匀采样以保持代表性')
+            st.info('🎥 Video frame extraction strategy: The system will automatically determine the number of frames to extract based on video length and content')
+            st.caption('• Short videos (≤50 frames): Extract all frames\n• Medium videos: Smart extraction based on quota\n• Long videos: Uniform sampling to maintain representativeness')
+        # 视频链接输入
+        st.subheader('🎥 Enter a video link')
+        # 初始化session state
+        if 'video_url' not in st.session_state:
+            st.session_state.video_url = ''
+        
+        video_url = st.text_input('Video Link', 
+                                 value=st.session_state.video_url,
+                                 placeholder='Paste your Video Link here',
+                                 help='Enter a video link, then click the button to process the video', 
+                                 key='video_url_input',
+                                 label_visibility="visible")
+        
+        # 更新session state
+        st.session_state.video_url = video_url
+        
+        # 视频处理按钮和清空按钮并排
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            if st.button('🎬 Process Video', type='primary'):
+                if video_url and video_url.strip():
+                    if is_video_url(video_url.strip()):
+                        with st.spinner('Processing video...'):
+                            video_frames = process_video_url(video_url.strip())
+                            if video_frames:
+                                # 将视频帧添加到session state
+                                if 'video_frames' not in st.session_state:
+                                    st.session_state.video_frames = []
+                                st.session_state.video_frames.extend(video_frames)
+                                st.success(f"Successfully processed video, extracted {len(video_frames)} frames")
+                            else:
+                                st.error("Failed to process video")
+                    else:
+                        st.warning("Please enter a valid video link")
+                else:
+                    st.warning("Please enter a video link")
+        
+        with col2:
+            # 只要有视频URL输入就显示清空按钮，允许随时取消处理
+            if video_url and video_url.strip():
+                if st.button('🗑️ Clear', help='Clear video URL and stop processing'):
+                    st.session_state.video_frames = []
+                    st.session_state.video_url = ''
+        
         upload_image_preview = st.empty()
         uploaded_files = st.file_uploader('Upload files', accept_multiple_files=True,
                                           type=['png', 'jpg', 'jpeg', 'webp', 'mp4', 'mov', 'avi', 'mkv', 'webm'],
-                                          help=f'You can upload multiple images (max to {max_image_limit}) or a single video.',
+                                          help=f'你可以上传多张图像（最多{max_image_limit}张）或者一个视频。',
                                           key=f'uploader_{st.session_state.uploader_key}',
                                           on_change=st.rerun)
         uploaded_pil_images, save_filenames = load_upload_file_and_show()
@@ -464,8 +734,53 @@ with st.sidebar:
             repetition_penalty = st.slider('重复惩罚', min_value=1.0, max_value=1.5, value=1.1, step=0.02)
             max_length = st.slider('最大输出长度', min_value=0, max_value=4096, value=1024, step=128)
             max_input_tiles = st.slider('最大图像块数 (控制图像分辨率)', min_value=1, max_value=24, value=12, step=1)
-            st.info('🎥 视频帧抽取策略：系统将自动根据视频长度和内容智能决定抽取帧数')
-            st.caption('• 短视频（≤50帧）：抽取所有帧\n• 中等视频：根据配额智能抽取\n• 长视频：均匀采样以保持代表性')
+            st.info('🎥 Video frame extraction strategy: The system will automatically determine the number of frames to extract based on video length and content')
+            st.caption('• Short videos (≤50 frames): Extract all frames\n• Medium videos: Smart extraction based on quota\n• Long videos: Uniform sampling to maintain representativeness')
+        
+        # 视频链接输入
+        st.subheader('🎥 或输入视频链接')
+        # 初始化session state
+        if 'video_url' not in st.session_state:
+            st.session_state.video_url = ''
+        
+        video_url = st.text_input('视频链接', 
+                                 value=st.session_state.video_url,
+                                 placeholder='https://www.youtube.com/watch?v=... 或 https://vimeo.com/... 或直接视频文件链接',
+                                 help='输入视频链接，然后点击按钮处理视频', 
+                                 key='video_url_input',
+                                 label_visibility="visible")
+        
+        # 更新session state
+        st.session_state.video_url = video_url
+        
+        # 视频处理按钮和清空按钮并排
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            if st.button('🎬 处理视频', type='primary'):
+                if video_url and video_url.strip():
+                    if is_video_url(video_url.strip()):
+                        with st.spinner('Processing video...'):
+                            video_frames = process_video_url(video_url.strip())
+                            if video_frames:
+                                # 将视频帧添加到session state
+                                if 'video_frames' not in st.session_state:
+                                    st.session_state.video_frames = []
+                                st.session_state.video_frames.extend(video_frames)
+                                st.success(f"Successfully processed video, extracted {len(video_frames)} frames")
+                            else:
+                                st.error("Failed to process video")
+                    else:
+                        st.warning("Please enter a valid video link")
+                else:
+                    st.warning("Please enter a video link")
+        
+        with col2:
+            # 只要有视频URL输入就显示清空按钮，允许随时取消处理
+            if video_url and video_url.strip():
+                if st.button('🗑️ 清空', help='清空视频链接并停止处理'):
+                    st.session_state.video_frames = []
+                    st.session_state.video_url = ''
+        
         upload_image_preview = st.empty()
         uploaded_files = st.file_uploader('上传文件', accept_multiple_files=True,
                                           type=['png', 'jpg', 'jpeg', 'webp', 'mp4', 'mov', 'avi', 'mkv', 'webm'],
@@ -583,8 +898,16 @@ if prompt:
     prompt = alias_instructions[prompt] if prompt in alias_instructions else prompt
     gallery_placeholder.empty()
     image_list = uploaded_pil_images
+    
+    # 将视频帧添加到发送给AI的图像列表中，但不显示在聊天记录中
+    all_images_for_ai = image_list.copy()
+    if 'video_frames' in st.session_state and st.session_state.video_frames:
+        all_images_for_ai.extend(st.session_state.video_frames)
+    
+    # 聊天记录中只保存用户上传的图片
     st.session_state.messages.append(
         {'role': 'user', 'content': prompt, 'image': image_list, 'filenames': save_filenames})
+    
     with st.chat_message('user'):
         st.write(prompt)
         show_one_or_multiple_images(st.session_state.messages[-1], total_image_num, is_input=True)
@@ -597,7 +920,20 @@ if len(st.session_state.messages) > 0 and st.session_state.messages[-1]['role'] 
         with st.spinner('Thinking...'):
             if not prompt:
                 prompt = st.session_state.messages[-1]['content']
-            response = generate_response(st.session_state.messages)
+            
+            # 临时修改最后一条用户消息，添加视频帧用于AI处理
+            messages_for_ai = st.session_state.messages.copy()
+            if 'video_frames' in st.session_state and st.session_state.video_frames:
+                last_user_message = messages_for_ai[-1]
+                if 'image' in last_user_message:
+                    # 创建包含视频帧的图像列表副本
+                    all_images = last_user_message['image'].copy()
+                    all_images.extend(st.session_state.video_frames)
+                    last_user_message = last_user_message.copy()
+                    last_user_message['image'] = all_images
+                    messages_for_ai[-1] = last_user_message
+            
+            response = generate_response(messages_for_ai)
             message = {'role': 'assistant', 'content': response}
         with st.spinner('Drawing...'):
             if '<ref>' in response:

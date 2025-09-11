@@ -342,7 +342,7 @@ block_css = """
 """
 
 def build_demo(embed_mode):
-    textbox = gr.Textbox(show_label=False, placeholder="Enter text and press ENTER", container=False)
+    textbox = gr.Textbox(show_label=False, container=False)
     with gr.Blocks(title="InternVL-Chat", theme=gr.themes.Default(), css=block_css) as demo:
         state = gr.State()
 
