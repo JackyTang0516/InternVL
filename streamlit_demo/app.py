@@ -615,26 +615,42 @@ def regenerate():
 
 
 logo_code = """
-<svg width="1700" height="200" xmlns="http://www.w3.org/2000/svg">
+<svg width="600" height="120" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="gradient1" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" style="stop-color: red; stop-opacity: 1" />
-      <stop offset="100%" style="stop-color: orange; stop-opacity: 1" />
+      <stop offset="0%" style="stop-color: #1e3a8a; stop-opacity: 1" />
+      <stop offset="100%" style="stop-color: #3b82f6; stop-opacity: 1" />
+    </linearGradient>
+    <linearGradient id="gradient2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color: #f97316; stop-opacity: 1" />
+      <stop offset="100%" style="stop-color: #fbbf24; stop-opacity: 1" />
     </linearGradient>
   </defs>
-  <text x="000" y="160" font-size="180" font-weight="bold" fill="url(#gradient1)" style="font-family: Arial, sans-serif;">
-    InternVL2 Demo
+  <!-- Curved swoosh element -->
+  <path d="M 20 50 Q 200 15 300 25 Q 400 35 580 50" stroke="url(#gradient2)" stroke-width="4" fill="none" />
+  <!-- Main brand text -->
+  <text x="150" y="80" font-size="60" font-weight="bold" fill="url(#gradient1)" style="font-family: Arial, sans-serif; font-style: italic;">
+    PacDent
+  </text>
+  <!-- Registered trademark symbol -->
+  <text x="300" y="60" font-size="20" fill="url(#gradient1)" style="font-family: Arial, sans-serif;">®</text>
+  <!-- Tagline -->
+  <text x="150" y="105" font-size="20" fill="#6b7280" style="font-family: Arial, sans-serif;">
+    Passion for Excellence
   </text>
 </svg>
 """
 
 # App title
-st.set_page_config(page_title='InternVL2')
+st.set_page_config(
+    page_title='Pac-Dent MediaMind',
+    page_icon='static/pac-dent-logo.png'
+)
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
-system_message_default = '我是书生·万象，英文名是InternVL，是由上海人工智能实验室、清华大学及多家合作单位联合开发的多模态大语言模型。'
+system_message_default = '我是 Pac-Dent MediaMind，一个专业的AI媒体分析和理解平台，专注于提供高质量的媒体内容分析和智能处理服务。'
 
 system_message_editable = '请尽可能详细地回答用户的问题。'
 
@@ -647,9 +663,9 @@ with st.sidebar:
     if lan == 'English':
         # st.logo(logo_code, link='https://github.com/OpenGVLab/InternVL', icon_image=logo_code)
         st.subheader('Models and parameters')
-        selected_model = st.sidebar.selectbox('Choose a InternVL2 chat model', model_list, key='selected_model',
+        selected_model = st.sidebar.selectbox('Choose a Pac-Dent MediaMind model', model_list, key='selected_model',
                                               on_change=clear_chat_history,
-                                              help='Due to the limited GPU resources with public IP addresses, we can currently only deploy models up to a maximum of 26B.')
+                                              help='Select the AI model for media analysis and understanding.')
         with st.expander('🤖 System Prompt'):
             persona_rec = st.text_area('System Prompt', value=system_message_editable,
                                        help='System prompt is a pre-defined message used to instruct the assistant at the beginning of a conversation.',
@@ -714,16 +730,11 @@ with st.sidebar:
                                           key=f'uploader_{st.session_state.uploader_key}',
                                           on_change=st.rerun)
         uploaded_pil_images, save_filenames = load_upload_file_and_show()
-        todo_list = st.sidebar.selectbox('Our to-do list', ['👏This is our to-do list',
-                                                            '1. Support for video uploads',
-                                                            '2. Support for PDF uploads',
-                                                            '3. Write a usage document'], key='todo_list',
-                                         help='Here are some features we plan to support in the future.')
     else:
         st.subheader('模型和参数')
-        selected_model = st.sidebar.selectbox('选择一个 InternVL2 对话模型', model_list, key='selected_model',
+        selected_model = st.sidebar.selectbox('选择一个 Pac-Dent MediaMind 模型', model_list, key='selected_model',
                                               on_change=clear_chat_history,
-                                              help='由于有限的公网GPU资源，我们暂时只能部署到最大参数26B的模型。')
+                                              help='选择用于媒体分析和理解的AI模型。')
         with st.expander('🤖 系统提示'):
             persona_rec = st.text_area('系统提示', value=system_message_editable,
                                        help='系统提示是在对话开始时用于指示助手的预定义消息。',
@@ -788,30 +799,25 @@ with st.sidebar:
                                           key=f'uploader_{st.session_state.uploader_key}',
                                           on_change=st.rerun)
         uploaded_pil_images, save_filenames = load_upload_file_and_show()
-        todo_list = st.sidebar.selectbox('我们的待办事项', ['👏这里是我们的待办事项', '1. 支持上传视频',
-                                                     '2. 支持上传 PDF 文档', '3. 写一个使用文档'], key='todo_list',
-                                         help='这是我们计划要支持的一些功能。')
 
-gradient_text_html = """
+# Logo styling
+st.markdown("""
 <style>
-.gradient-text {
-    font-weight: bold;
-    background: -webkit-linear-gradient(left, red, orange);
-    background: linear-gradient(to right, red, orange);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    display: inline;
-    font-size: 3em;
+.logo-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 20px 0;
 }
 </style>
-<div class="gradient-text">InternVL2</div>
-"""
+""", unsafe_allow_html=True)
+
 if lan == 'English':
-    st.markdown(gradient_text_html, unsafe_allow_html=True)
-    st.caption('Expanding Performance Boundaries of Open-Source Multimodal Large Language Models')
+    st.markdown('<div class="logo-container">' + logo_code + '</div>', unsafe_allow_html=True)
+    st.caption('An AI-Powered Media Analysis and Understanding Platform')
 else:
-    st.markdown(gradient_text_html.replace('InternVL2', '书生·万象'), unsafe_allow_html=True)
-    st.caption('扩展开源多模态大语言模型的性能边界')
+    st.markdown('<div class="logo-container">' + logo_code + '</div>', unsafe_allow_html=True)
+    st.caption('AI驱动的媒体分析和理解平台')
 
 # Store LLM generated responses
 if 'messages' not in st.session_state.keys():
@@ -848,11 +854,11 @@ with gallery_placeholder.container():
         return_value='index',
         key='image_select'
     )
-    if lan == 'English':
-        st.caption(
-            'Note: For non-commercial research use only. AI responses may contain errors. Users should not spread or allow others to spread hate speech, violence, pornography, or fraud-related harmful information.')
-    else:
-        st.caption('注意：仅限非商业研究使用。用户应不传播或允许他人传播仇恨言论、暴力、色情内容或与欺诈相关的有害信息。')
+    # if lan == 'English':
+        # st.caption(
+        #     'Note: For non-commercial research use only. AI responses may contain errors. Users should not spread or allow others to spread hate speech, violence, pornography, or fraud-related harmful information.')
+    # else:
+        # st.caption('注意：仅限非商业研究使用。用户应不传播或允许他人传播仇恨言论、暴力、色情内容或与欺诈相关的有害信息。')
     if img_idx != -1 and len(st.session_state.messages) == 0 and selected_model is not None:
         gallery_placeholder.empty()
         st.session_state.messages.append({'role': 'user', 'content': captions[img_idx], 'image': [images[img_idx]],
@@ -879,13 +885,13 @@ if lan == 'English':
         prompt = st.chat_input('Too many images have been uploaded. Please clear the history.',
                                disabled=input_disable_flag)
     else:
-        prompt = st.chat_input('Send messages to InternVL', disabled=input_disable_flag)
+        prompt = st.chat_input('Send messages to Pac-Dent MediaMind', disabled=input_disable_flag)
 else:
     st.sidebar.button('清空聊天记录', on_click=partial(combined_func, func_list=[clear_chat_history, clear_file_uploader]))
     if input_disable_flag:
         prompt = st.chat_input('输入的图片太多了，请清空历史记录。', disabled=input_disable_flag)
     else:
-        prompt = st.chat_input('给 “InternVL” 发送消息', disabled=input_disable_flag)
+        prompt = st.chat_input('给 "Pac-Dent MediaMind" 发送消息', disabled=input_disable_flag)
 
 alias_instructions = {
     '目标检测': '在以下图像中进行目标检测，并标出所有物体。',
