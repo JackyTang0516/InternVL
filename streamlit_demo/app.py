@@ -275,7 +275,7 @@ with st.sidebar:
     lan = st.selectbox('#### Language / 语言', ['English', '中文'], on_change=st.rerun,
                        help='This is only for switching the UI language. 这仅用于切换UI界面的语言。')
     if lan == 'English':
-        st.logo(logo_code, link='https://github.com/OpenGVLab/InternVL', icon_image=logo_code)
+        # st.logo(logo_code, link='https://github.com/OpenGVLab/InternVL', icon_image=logo_code)
         st.subheader('Models and parameters')
         selected_model = st.sidebar.selectbox('Choose a InternVL2 chat model', model_list, key='selected_model',
                                               on_change=clear_chat_history,

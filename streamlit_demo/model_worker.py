@@ -188,7 +188,10 @@ class ModelWorker:
                 torch_dtype=torch.bfloat16,
                 trust_remote_code=True).eval()
         if not load_8bit and not device == 'auto':
-            self.model = self.model.cuda()
+            if device == 'cuda':
+                self.model = self.model.cuda()
+            elif device == 'cpu':
+                self.model = self.model.to('cpu')
         self.load_8bit = load_8bit
         self.device = device
         self.model_path = model_path
@@ -217,7 +220,15 @@ class ModelWorker:
                 torch_dtype=torch.bfloat16,
                 trust_remote_code=True).eval()
         if not self.load_8bit and not self.device == 'auto':
-            self.model = self.model.cuda()
+            if self.device == 'cuda':
+                self.model = self.model.cuda()
+            elif self.device == 'mps' and torch.backends.mps.is_available():
+                # MPS不支持BFloat16，使用Float16
+                self.model = self.model.to('mps')
+                # 将模型转换为Float16以兼容MPS
+                self.model = self.model.half()
+            elif self.device == 'cpu':
+                self.model = self.model.to('cpu')
 
     def register_to_controller(self):
         logger.info('Register to controller')
