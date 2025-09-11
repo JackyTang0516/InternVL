@@ -56,12 +56,73 @@ def get_model_list():
 def load_upload_file_and_show():
     if uploaded_files is not None:
         images, filenames = [], []
+        video_exts = {'.mp4', '.mov', '.avi', '.mkv', '.webm'}
+        def is_video_file(name, mime_type):
+            ext = os.path.splitext(name)[1].lower()
+            return (mime_type and mime_type.startswith('video')) or (ext in video_exts)
+
+        def extract_video_frames_to_pil(tmp_video_path, max_frames):
+            cap = cv2.VideoCapture(tmp_video_path)
+            if not cap.isOpened():
+                return []
+            total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            if total <= 0:
+                total = 1
+            n = max(1, min(max_frames, total))
+            ids = np.linspace(0, total - 1, n, dtype=np.int32)
+            frames = []
+            cur_idx = 0
+            for fid in ids:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(fid))
+                ok, frame = cap.read()
+                if ok and frame is not None:
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    frames.append(Image.fromarray(rgb))
+                cur_idx += 1
+            cap.release()
+            return frames
+
+        # 计算当前会话中已使用的图片配额（用户上传的图像/帧）
+        try:
+            used_images = 0
+            for m in st.session_state.get('messages', []):
+                if m.get('role') == 'user' and 'image' in m:
+                    used_images += len(m['image'])
+        except Exception:
+            used_images = 0
+
         for file in uploaded_files:
-            file_bytes = np.asarray(bytearray(file.read()), dtype=np.uint8)
-            img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img = Image.fromarray(img)
-            images.append(img)
+            file_bytes_raw = file.read()
+            if is_video_file(getattr(file, 'name', ''), getattr(file, 'type', '')):
+                # 保存到临时视频文件
+                t = datetime.datetime.now()
+                temp_dir = os.path.join(LOGDIR, 'serve_videos', f'{t.year}-{t.month:02d}-{t.day:02d}')
+                os.makedirs(temp_dir, exist_ok=True)
+                video_hash = hashlib.md5(file_bytes_raw).hexdigest()
+                ext = os.path.splitext(getattr(file, 'name', 'video.mp4'))[1] or '.mp4'
+                tmp_video_path = os.path.join(temp_dir, f'{video_hash}{ext}')
+                if not os.path.isfile(tmp_video_path):
+                    with open(tmp_video_path, 'wb') as vf:
+                        vf.write(file_bytes_raw)
+                # 关键帧/均匀采样帧数，受前端最大图像数与用户滑块上限限制
+                remaining_quota = max(1, max(0, max_image_limit - used_images - len(images)))
+                # 三重约束：用户选择上限 ∧ 剩余配额 ∧ 实际视频总帧数（在函数中处理）
+                try:
+                    max_frames_to_sample = max(1, min(video_max_frames, remaining_quota))
+                except NameError:
+                    max_frames_to_sample = remaining_quota
+                frames = extract_video_frames_to_pil(tmp_video_path, max_frames=max_frames_to_sample)
+                images.extend(frames)
+                # 为了统一日志结构，这里不保存帧到磁盘（避免过多文件），仅记录视频路径
+                filenames.append(tmp_video_path)
+            else:
+                file_bytes = np.asarray(bytearray(file_bytes_raw), dtype=np.uint8)
+                img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                if img is None:
+                    continue
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(img)
+                images.append(img)
         with upload_image_preview.container():
             Library(images)
 
@@ -291,10 +352,13 @@ with st.sidebar:
             max_length = st.slider('max_new_token', min_value=0, max_value=4096, value=1024, step=128)
             max_input_tiles = st.slider('max_input_tiles (control image resolution)', min_value=1, max_value=24,
                                         value=12, step=1)
+            video_max_frames = st.slider('video_max_frames (user-selected)', min_value=1, max_value=64,
+                                         value=min(1, max_image_limit), step=1,
+                                         help='Upper bound of frames sampled from a single video.')
         upload_image_preview = st.empty()
         uploaded_files = st.file_uploader('Upload files', accept_multiple_files=True,
-                                          type=['png', 'jpg', 'jpeg', 'webp'],
-                                          help='You can upload multiple images (max to 4) or a single video.',
+                                          type=['png', 'jpg', 'jpeg', 'webp', 'mp4', 'mov', 'avi', 'mkv', 'webm'],
+                                          help=f'You can upload multiple images (max to {max_image_limit}) or a single video.',
                                           key=f'uploader_{st.session_state.uploader_key}',
                                           on_change=st.rerun)
         uploaded_pil_images, save_filenames = load_upload_file_and_show()
@@ -318,10 +382,13 @@ with st.sidebar:
             repetition_penalty = st.slider('重复惩罚', min_value=1.0, max_value=1.5, value=1.1, step=0.02)
             max_length = st.slider('最大输出长度', min_value=0, max_value=4096, value=1024, step=128)
             max_input_tiles = st.slider('最大图像块数 (控制图像分辨率)', min_value=1, max_value=24, value=12, step=1)
+            video_max_frames = st.slider('视频采样帧数（用户选择上限）', min_value=1, max_value=64,
+                                         value=min(24, max_image_limit), step=1,
+                                         help='单个视频最多采样的帧数上限，实际受剩余配额与视频总帧数约束。')
         upload_image_preview = st.empty()
         uploaded_files = st.file_uploader('上传文件', accept_multiple_files=True,
-                                          type=['png', 'jpg', 'jpeg', 'webp'],
-                                          help='你可以上传多张图像（最多4张）或者一个视频。',
+                                          type=['png', 'jpg', 'jpeg', 'webp', 'mp4', 'mov', 'avi', 'mkv', 'webm'],
+                                          help=f'你可以上传多张图像（最多{max_image_limit}张）或者一个视频。',
                                           key=f'uploader_{st.session_state.uploader_key}',
                                           on_change=st.rerun)
         uploaded_pil_images, save_filenames = load_upload_file_and_show()

@@ -51,7 +51,7 @@ sleep 5
 
 # 启动Streamlit应用
 echo "3. 启动Streamlit应用..."
-streamlit run app.py --server.port $WEB_SERVER_PORT --server.address 0.0.0.0 -- --controller_url $CONTROLLER_URL &
+streamlit run app.py --server.port $WEB_SERVER_PORT --server.address 0.0.0.0 -- --controller_url $CONTROLLER_URL --max_image_limit 64 &
 STREAMLIT_PID=$!
 echo "Streamlit应用已启动，PID: $STREAMLIT_PID"
 
