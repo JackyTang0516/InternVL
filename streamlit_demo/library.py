@@ -73,7 +73,7 @@ class Library():
                 # and then increase or reset the indexes as required.
                 for img in library_files[filename_idx:(filename_idx + number_of_columns)]:
                     with imgs_columns[col_idx]:
-                        st.image(img, use_column_width='auto')
+                        st.image(img, use_container_width='auto')
                         st.write(
                             f"""<style>
                                 [data-testid="stHorizontalBlock"] {{

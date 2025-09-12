@@ -2,7 +2,7 @@
 # Start InternVL Model Worker
 # ==========================================
 
-$python_path = "C:\Program Files\Python38\python.exe"
+$python_path = "C:\Users\PDLP-013-Eric\Anaconda3\envs\video\python.exe"
 $worker_port = 40001
 $controller_url = "http://127.0.0.1:40000"
 $model_path = "OpenGVLab/InternVL2-1B"

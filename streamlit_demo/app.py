@@ -32,13 +32,17 @@ import imageio_ffmpeg
 
 custom_args = sys.argv[1:]
 parser = argparse.ArgumentParser()
-parser.add_argument('--controller_url', type=str, default='http://10.140.60.209:10075', help='url of the controller')
+parser.add_argument('--controller_url', type=str, default='http://localhost:40000', help='url of the controller')
 parser.add_argument('--sd_worker_url', type=str, default='http://0.0.0.0:40006', help='url of the stable diffusion worker')
+parser.add_argument('--chatgpt_worker_url', type=str, default='http://localhost:40002', help='url of the chatgpt worker')
 parser.add_argument('--max_image_limit', type=int, default=4, help='maximum number of images')
+parser.add_argument('--use_chatgpt', action='store_true', help='use ChatGPT instead of local model')
 args = parser.parse_args(custom_args)
 controller_url = args.controller_url
 sd_worker_url = args.sd_worker_url
+chatgpt_worker_url = args.chatgpt_worker_url
 max_image_limit = args.max_image_limit
+use_chatgpt = args.use_chatgpt
 print('args:', args)
 
 
@@ -49,6 +53,9 @@ def get_conv_log_filename():
 
 
 def get_model_list():
+    if use_chatgpt:
+        return ['gpt-4o-mini', 'gpt-4o', 'gpt-3.5-turbo']
+    
     ret = requests.post(controller_url + '/refresh_all_workers')
     assert ret.status_code == 200
     ret = requests.post(controller_url + '/list_models')
@@ -80,7 +87,7 @@ def get_video_info(url):
     """获取视频信息而不下载"""
     try:
         cmd = [
-            'py', '-3.10', '-m', 'yt_dlp',
+            'C:\\Users\\PDLP-013-Eric\\Anaconda3\\envs\\video\\python.exe', '-m', 'yt_dlp',
             '--dump-json',
             '--no-playlist',
             url
@@ -192,7 +199,7 @@ def stream_video_frames(url):
         # 使用yt-dlp获取最佳视频流URL，然后用ffmpeg处理
         with st.spinner('Getting video stream URL...'):
             cmd = [
-                'py', '-3.10', '-m', 'yt_dlp',
+                'C:\\Users\\PDLP-013-Eric\\Anaconda3\\envs\\video\\python.exe', '-m', 'yt_dlp',
                 '-f', 'best[height<=720]',  # 选择720p以下的视频流
                 '--get-url',
                 '--no-playlist',
@@ -502,6 +509,9 @@ def load_upload_file_and_show():
 
 
 def get_selected_worker_ip():
+    if use_chatgpt:
+        return chatgpt_worker_url
+    
     ret = requests.post(controller_url + '/get_worker_address',
             json={'model': selected_model})
     worker_addr = ret.json()['address']
@@ -830,13 +840,7 @@ with st.sidebar:
                                             # 显示完整字幕内容
                                             st.text_area(f"Full Subtitle {i+1}:", subtitle['content'], height=150, key=f"preview_full_{i}")
                                             
-                                            # 显示纯文本版本
-                                            lines = subtitle['content'].split('\n')
-                                            text_lines = [line for line in lines if line and not line.startswith('WEBVTT') and not '-->' in line and not line.isdigit()]
-                                            subtitle_text = " ".join(text_lines)
-                                            if subtitle_text.strip():
-                                                st.write("**Text Only:**")
-                                                st.text_area(f"Text Preview {i+1}:", subtitle_text.strip(), height=100, key=f"preview_text_{i}")
+                                            # Text Only部分已移除
                             else:
                                 st.error("Failed to process video")
                     else:
@@ -863,23 +867,23 @@ with st.sidebar:
                                           on_change=st.rerun)
         uploaded_pil_images, save_filenames = load_upload_file_and_show()
         
-        # 显示字幕信息
-        if 'video_subtitles' in st.session_state and st.session_state.video_subtitles:
-            with st.expander('📝 Video Subtitles', expanded=True):
-                for i, subtitle in enumerate(st.session_state.video_subtitles):
-                    st.write(f"**Subtitle File {i+1}:**")
-                    # 显示完整的字幕内容（包括时间戳）
-                    st.text_area(f"Full Content {i+1}:", subtitle['content'], height=200, key=f"full_subtitle_{i}")
-                    
-                    # 提取并显示纯文本版本
-                    lines = subtitle['content'].split('\n')
-                    text_lines = [line for line in lines if line and not line.startswith('WEBVTT') and not '-->' in line and not line.isdigit()]
-                    subtitle_text = " ".join(text_lines)
-                    if subtitle_text.strip():
-                        st.write("**Text Only:**")
-                        st.text_area(f"Text Content {i+1}:", subtitle_text.strip(), height=100, key=f"text_subtitle_{i}")
-                    else:
-                        st.write("No text content found in this subtitle file.")
+        # 字幕信息已隐藏 - 不再显示给用户
+        # if 'video_subtitles' in st.session_state and st.session_state.video_subtitles:
+        #     with st.expander('📝 Video Subtitles', expanded=True):
+        #         for i, subtitle in enumerate(st.session_state.video_subtitles):
+        #             st.write(f"**Subtitle File {i+1}:**")
+        #             # 显示完整的字幕内容（包括时间戳）
+        #             st.text_area(f"Full Content {i+1}:", subtitle['content'], height=200, key=f"full_subtitle_{i}")
+        #             
+        #             # 提取并显示纯文本版本
+        #             lines = subtitle['content'].split('\n')
+        #             text_lines = [line for line in lines if line and not line.startswith('WEBVTT') and not '-->' in line and not line.isdigit()]
+        #             subtitle_text = " ".join(text_lines)
+        #             if subtitle_text.strip():
+        #                 st.write("**Text Only:**")
+        #                 st.text_area(f"Text Content {i+1}:", subtitle_text.strip(), height=100, key=f"text_subtitle_{i}")
+        #             else:
+        #                 st.write("No text content found in this subtitle file.")
     else:
         st.subheader('模型和参数')
         selected_model = st.sidebar.selectbox('选择一个 Pac-Dent MediaMind 模型', model_list, key='selected_model',
@@ -944,13 +948,7 @@ with st.sidebar:
                                             # 显示完整字幕内容
                                             st.text_area(f"完整字幕 {i+1}:", subtitle['content'], height=150, key=f"preview_full_{i}")
                                             
-                                            # 显示纯文本版本
-                                            lines = subtitle['content'].split('\n')
-                                            text_lines = [line for line in lines if line and not line.startswith('WEBVTT') and not '-->' in line and not line.isdigit()]
-                                            subtitle_text = " ".join(text_lines)
-                                            if subtitle_text.strip():
-                                                st.write("**纯文本版本:**")
-                                                st.text_area(f"文本预览 {i+1}:", subtitle_text.strip(), height=100, key=f"preview_text_{i}")
+                                            # 纯文本版本部分已移除
                             else:
                                 st.error("处理视频失败")
                     else:
@@ -977,23 +975,23 @@ with st.sidebar:
                                           on_change=st.rerun)
         uploaded_pil_images, save_filenames = load_upload_file_and_show()
         
-        # 显示字幕信息
-        if 'video_subtitles' in st.session_state and st.session_state.video_subtitles:
-            with st.expander('📝 视频字幕', expanded=True):
-                for i, subtitle in enumerate(st.session_state.video_subtitles):
-                    st.write(f"**字幕文件 {i+1}:**")
-                    # 显示完整的字幕内容（包括时间戳）
-                    st.text_area(f"完整内容 {i+1}:", subtitle['content'], height=200, key=f"full_subtitle_{i}")
-                    
-                    # 提取并显示纯文本版本
-                    lines = subtitle['content'].split('\n')
-                    text_lines = [line for line in lines if line and not line.startswith('WEBVTT') and not '-->' in line and not line.isdigit()]
-                    subtitle_text = " ".join(text_lines)
-                    if subtitle_text.strip():
-                        st.write("**纯文本版本:**")
-                        st.text_area(f"文本内容 {i+1}:", subtitle_text.strip(), height=100, key=f"text_subtitle_{i}")
-                    else:
-                        st.write("此字幕文件中未找到文本内容。")
+        # 字幕信息已隐藏 - 不再显示给用户
+        # if 'video_subtitles' in st.session_state and st.session_state.video_subtitles:
+        #     with st.expander('📝 视频字幕', expanded=True):
+        #         for i, subtitle in enumerate(st.session_state.video_subtitles):
+        #             st.write(f"**字幕文件 {i+1}:**")
+        #             # 显示完整的字幕内容（包括时间戳）
+        #             st.text_area(f"完整内容 {i+1}:", subtitle['content'], height=200, key=f"full_subtitle_{i}")
+        #             
+        #             # 提取并显示纯文本版本
+        #             lines = subtitle['content'].split('\n')
+        #             text_lines = [line for line in lines if line and not line.startswith('WEBVTT') and not '-->' in line and not line.isdigit()]
+        #             subtitle_text = " ".join(text_lines)
+        #             if subtitle_text.strip():
+        #                 st.write("**纯文本版本:**")
+        #                 st.text_area(f"文本内容 {i+1}:", subtitle_text.strip(), height=100, key=f"text_subtitle_{i}")
+        #             else:
+        #                 st.write("此字幕文件中未找到文本内容。")
 
 # Logo styling
 st.markdown("""
