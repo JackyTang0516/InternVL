@@ -99,6 +99,76 @@ def get_video_info(url):
         raise Exception(f"获取视频信息时出错: {str(e)}")
 
 
+def extract_video_subtitles(url):
+    """提取视频字幕"""
+    try:
+        # 首先检查可用的字幕
+        cmd = [
+            'yt-dlp',
+            '--list-subs',
+            '--no-playlist',
+            url
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        
+        if result.returncode != 0:
+            return None
+        
+        # 检查是否有字幕可用
+        if "Available automatic captions" in result.stdout or "Available subtitles" in result.stdout:
+            # 有字幕可用，继续处理
+            pass
+        elif "has no subtitles" in result.stdout or "No subtitles" in result.stdout:
+            return None
+        else:
+            # 如果没有明确的字幕信息，也尝试提取
+            pass
+        
+        # 提取字幕（优先选择英文和中文）
+        subtitle_cmd = [
+            'yt-dlp',
+            '--write-subs',
+            '--write-auto-subs',
+            '--sub-langs', 'en,zh,zh-cn,zh-tw',
+            '--sub-format', 'vtt',
+            '--skip-download',
+            '--no-playlist',
+            '--output', '/tmp/%(title)s.%(ext)s',
+            url
+        ]
+        
+        result = subprocess.run(subtitle_cmd, capture_output=True, text=True, timeout=60)
+        
+        if result.returncode != 0:
+            return None
+        
+        # 查找生成的字幕文件
+        import glob
+        subtitle_files = glob.glob('/tmp/*.vtt')
+        
+        if not subtitle_files:
+            return None
+        
+        # 读取字幕内容
+        subtitles = []
+        for subtitle_file in subtitle_files:
+            try:
+                with open(subtitle_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    subtitles.append({
+                        'file': subtitle_file,
+                        'content': content
+                    })
+            except Exception as e:
+                continue
+        
+        return subtitles if subtitles else None
+        
+    except Exception as e:
+        return None
+
+
 def stream_video_frames(url):
     """流式处理视频帧，不下载整个文件"""
     try:
@@ -108,6 +178,15 @@ def stream_video_frames(url):
         
         duration = video_info.get('duration', 0)
         title = video_info.get('title', 'Unknown')
+        
+        # 尝试提取字幕
+        subtitles = None
+        with st.spinner('Extracting subtitles...'):
+            subtitles = extract_video_subtitles(url)
+            if subtitles:
+                st.info(f"📝 Found {len(subtitles)} subtitle file(s)")
+            else:
+                st.info("📝 No subtitles available for this video")
         
         # 使用yt-dlp获取最佳视频流URL，然后用ffmpeg处理
         with st.spinner('Getting video stream URL...'):
@@ -207,11 +286,19 @@ def stream_video_frames(url):
                 st.warning(f"Error processing video frames: {str(e)}")
         
         if frames:
-            st.success(f"🎬 Video processing completed: Extracted {len(frames)} frames from {title} (Duration: {duration:.1f}s)")
+            subtitle_info = ""
+            if subtitles:
+                subtitle_info = f" and {len(subtitles)} subtitle file(s)"
+            st.success(f"🎬 Video processing completed: Extracted {len(frames)} frames{subtitle_info} from {title} (Duration: {duration:.1f}s)")
         else:
             st.warning("Failed to extract frames from video, please check if the link is valid or try another video")
         
-        return frames
+        return {
+            'frames': frames,
+            'subtitles': subtitles,
+            'title': title,
+            'duration': duration
+        }
         
     except Exception as e:
         st.error(f"Error processing video: {str(e)}")
@@ -220,7 +307,10 @@ def stream_video_frames(url):
 
 def process_video_url(url):
     """处理视频链接 - 使用流式处理"""
-    return stream_video_frames(url)
+    result = stream_video_frames(url)
+    if isinstance(result, dict):
+        return result['frames']
+    return result
 
 
 def load_upload_file_and_show():
@@ -491,11 +581,15 @@ def pil_image_to_base64(image):
 def clear_chat_history():
     st.session_state.messages = []
     st.session_state['image_select'] = -1
-    # 清除视频帧
+    # 清除视频帧和字幕
     if 'video_frames' in st.session_state:
         st.session_state.video_frames = []
     if 'video_url' in st.session_state:
         st.session_state.video_url = ''
+    if 'video_subtitles' in st.session_state:
+        del st.session_state.video_subtitles
+    if 'video_title' in st.session_state:
+        del st.session_state.video_title
 
 
 def clear_file_uploader():
@@ -551,10 +645,18 @@ def show_one_or_multiple_images(message, total_image_num, is_input=True):
         # 如果有视频帧被处理，显示提示信息
         if 'video_frames' in st.session_state and st.session_state.video_frames:
             video_frames_count = len(st.session_state.video_frames)
+            subtitle_info = ""
+            if 'video_subtitles' in st.session_state and st.session_state.video_subtitles:
+                subtitle_count = len(st.session_state.video_subtitles)
+                if lan == 'English':
+                    subtitle_info = f" and {subtitle_count} subtitle file(s)"
+                else:
+                    subtitle_info = f" 和 {subtitle_count} 个字幕文件"
+            
             if lan == 'English':
-                st.info(f"🎥 Video frames ({video_frames_count} frames) are being processed in the background")
+                st.info(f"🎥 Video frames ({video_frames_count} frames){subtitle_info} are being processed in the background")
             else:
-                st.info(f"🎥 Video frames ({video_frames_count} frames) are being processed in the background")
+                st.info(f"🎥 视频帧（{video_frames_count}帧）{subtitle_info}正在后台处理中")
         
         # 只在有上传的图片时显示标签，纯视频处理时不显示
         if is_input and regular_images_count > 0:
@@ -702,13 +804,36 @@ with st.sidebar:
                 if video_url and video_url.strip():
                     if is_video_url(video_url.strip()):
                         with st.spinner('Processing video...'):
-                            video_frames = process_video_url(video_url.strip())
-                            if video_frames:
+                            result = stream_video_frames(video_url.strip())
+                            if result and isinstance(result, dict) and result['frames']:
                                 # 将视频帧添加到session state
                                 if 'video_frames' not in st.session_state:
                                     st.session_state.video_frames = []
-                                st.session_state.video_frames.extend(video_frames)
-                                st.success(f"Successfully processed video, extracted {len(video_frames)} frames")
+                                st.session_state.video_frames.extend(result['frames'])
+                                
+                                # 存储字幕信息
+                                if result['subtitles']:
+                                    st.session_state.video_subtitles = result['subtitles']
+                                    st.session_state.video_title = result['title']
+                                
+                                subtitle_info = f" and {len(result['subtitles'])} subtitle file(s)" if result['subtitles'] else ""
+                                st.success(f"Successfully processed video, extracted {len(result['frames'])} frames{subtitle_info}")
+                                
+                                # 显示字幕预览
+                                if result['subtitles']:
+                                    with st.expander("📝 Subtitle Preview", expanded=True):
+                                        for i, subtitle in enumerate(result['subtitles']):
+                                            st.write(f"**Subtitle {i+1}:**")
+                                            # 显示完整字幕内容
+                                            st.text_area(f"Full Subtitle {i+1}:", subtitle['content'], height=150, key=f"preview_full_{i}")
+                                            
+                                            # 显示纯文本版本
+                                            lines = subtitle['content'].split('\n')
+                                            text_lines = [line for line in lines if line and not line.startswith('WEBVTT') and not '-->' in line and not line.isdigit()]
+                                            subtitle_text = " ".join(text_lines)
+                                            if subtitle_text.strip():
+                                                st.write("**Text Only:**")
+                                                st.text_area(f"Text Preview {i+1}:", subtitle_text.strip(), height=100, key=f"preview_text_{i}")
                             else:
                                 st.error("Failed to process video")
                     else:
@@ -722,6 +847,10 @@ with st.sidebar:
                 if st.button('🗑️ Clear', help='Clear video URL and stop processing'):
                     st.session_state.video_frames = []
                     st.session_state.video_url = ''
+                    if 'video_subtitles' in st.session_state:
+                        del st.session_state.video_subtitles
+                    if 'video_title' in st.session_state:
+                        del st.session_state.video_title
         
         upload_image_preview = st.empty()
         uploaded_files = st.file_uploader('Upload files', accept_multiple_files=True,
@@ -730,6 +859,24 @@ with st.sidebar:
                                           key=f'uploader_{st.session_state.uploader_key}',
                                           on_change=st.rerun)
         uploaded_pil_images, save_filenames = load_upload_file_and_show()
+        
+        # 显示字幕信息
+        if 'video_subtitles' in st.session_state and st.session_state.video_subtitles:
+            with st.expander('📝 Video Subtitles', expanded=True):
+                for i, subtitle in enumerate(st.session_state.video_subtitles):
+                    st.write(f"**Subtitle File {i+1}:**")
+                    # 显示完整的字幕内容（包括时间戳）
+                    st.text_area(f"Full Content {i+1}:", subtitle['content'], height=200, key=f"full_subtitle_{i}")
+                    
+                    # 提取并显示纯文本版本
+                    lines = subtitle['content'].split('\n')
+                    text_lines = [line for line in lines if line and not line.startswith('WEBVTT') and not '-->' in line and not line.isdigit()]
+                    subtitle_text = " ".join(text_lines)
+                    if subtitle_text.strip():
+                        st.write("**Text Only:**")
+                        st.text_area(f"Text Content {i+1}:", subtitle_text.strip(), height=100, key=f"text_subtitle_{i}")
+                    else:
+                        st.write("No text content found in this subtitle file.")
     else:
         st.subheader('模型和参数')
         selected_model = st.sidebar.selectbox('选择一个 Pac-Dent MediaMind 模型', model_list, key='selected_model',
@@ -771,15 +918,38 @@ with st.sidebar:
                 if video_url and video_url.strip():
                     if is_video_url(video_url.strip()):
                         with st.spinner('Processing video...'):
-                            video_frames = process_video_url(video_url.strip())
-                            if video_frames:
+                            result = stream_video_frames(video_url.strip())
+                            if result and isinstance(result, dict) and result['frames']:
                                 # 将视频帧添加到session state
                                 if 'video_frames' not in st.session_state:
                                     st.session_state.video_frames = []
-                                st.session_state.video_frames.extend(video_frames)
-                                st.success(f"Successfully processed video, extracted {len(video_frames)} frames")
+                                st.session_state.video_frames.extend(result['frames'])
+                                
+                                # 存储字幕信息
+                                if result['subtitles']:
+                                    st.session_state.video_subtitles = result['subtitles']
+                                    st.session_state.video_title = result['title']
+                                
+                                subtitle_info = f" 和 {len(result['subtitles'])} 个字幕文件" if result['subtitles'] else ""
+                                st.success(f"成功处理视频，提取了 {len(result['frames'])} 帧{subtitle_info}")
+                                
+                                # 显示字幕预览
+                                if result['subtitles']:
+                                    with st.expander("📝 字幕预览", expanded=True):
+                                        for i, subtitle in enumerate(result['subtitles']):
+                                            st.write(f"**字幕 {i+1}:**")
+                                            # 显示完整字幕内容
+                                            st.text_area(f"完整字幕 {i+1}:", subtitle['content'], height=150, key=f"preview_full_{i}")
+                                            
+                                            # 显示纯文本版本
+                                            lines = subtitle['content'].split('\n')
+                                            text_lines = [line for line in lines if line and not line.startswith('WEBVTT') and not '-->' in line and not line.isdigit()]
+                                            subtitle_text = " ".join(text_lines)
+                                            if subtitle_text.strip():
+                                                st.write("**纯文本版本:**")
+                                                st.text_area(f"文本预览 {i+1}:", subtitle_text.strip(), height=100, key=f"preview_text_{i}")
                             else:
-                                st.error("Failed to process video")
+                                st.error("处理视频失败")
                     else:
                         st.warning("Please enter a valid video link")
                 else:
@@ -791,6 +961,10 @@ with st.sidebar:
                 if st.button('🗑️ 清空', help='清空视频链接并停止处理'):
                     st.session_state.video_frames = []
                     st.session_state.video_url = ''
+                    if 'video_subtitles' in st.session_state:
+                        del st.session_state.video_subtitles
+                    if 'video_title' in st.session_state:
+                        del st.session_state.video_title
         
         upload_image_preview = st.empty()
         uploaded_files = st.file_uploader('上传文件', accept_multiple_files=True,
@@ -799,6 +973,24 @@ with st.sidebar:
                                           key=f'uploader_{st.session_state.uploader_key}',
                                           on_change=st.rerun)
         uploaded_pil_images, save_filenames = load_upload_file_and_show()
+        
+        # 显示字幕信息
+        if 'video_subtitles' in st.session_state and st.session_state.video_subtitles:
+            with st.expander('📝 视频字幕', expanded=True):
+                for i, subtitle in enumerate(st.session_state.video_subtitles):
+                    st.write(f"**字幕文件 {i+1}:**")
+                    # 显示完整的字幕内容（包括时间戳）
+                    st.text_area(f"完整内容 {i+1}:", subtitle['content'], height=200, key=f"full_subtitle_{i}")
+                    
+                    # 提取并显示纯文本版本
+                    lines = subtitle['content'].split('\n')
+                    text_lines = [line for line in lines if line and not line.startswith('WEBVTT') and not '-->' in line and not line.isdigit()]
+                    subtitle_text = " ".join(text_lines)
+                    if subtitle_text.strip():
+                        st.write("**纯文本版本:**")
+                        st.text_area(f"文本内容 {i+1}:", subtitle_text.strip(), height=100, key=f"text_subtitle_{i}")
+                    else:
+                        st.write("此字幕文件中未找到文本内容。")
 
 # Logo styling
 st.markdown("""
@@ -910,6 +1102,19 @@ if prompt:
     if 'video_frames' in st.session_state and st.session_state.video_frames:
         all_images_for_ai.extend(st.session_state.video_frames)
     
+    # 如果有字幕，将字幕信息添加到提示中
+    enhanced_prompt = prompt
+    if 'video_subtitles' in st.session_state and st.session_state.video_subtitles:
+        subtitle_text = ""
+        for subtitle in st.session_state.video_subtitles:
+            # 简单提取字幕文本（去除时间戳）
+            lines = subtitle['content'].split('\n')
+            text_lines = [line for line in lines if line and not line.startswith('WEBVTT') and not '-->' in line and not line.isdigit()]
+            subtitle_text += " ".join(text_lines) + "\n"
+        
+        if subtitle_text.strip():
+            enhanced_prompt = f"{prompt}\n\nVideo subtitles for context:\n{subtitle_text.strip()}"
+    
     # 聊天记录中只保存用户上传的图片
     st.session_state.messages.append(
         {'role': 'user', 'content': prompt, 'image': image_list, 'filenames': save_filenames})
@@ -927,7 +1132,7 @@ if len(st.session_state.messages) > 0 and st.session_state.messages[-1]['role'] 
             if not prompt:
                 prompt = st.session_state.messages[-1]['content']
             
-            # 临时修改最后一条用户消息，添加视频帧用于AI处理
+            # 临时修改最后一条用户消息，添加视频帧和字幕用于AI处理
             messages_for_ai = st.session_state.messages.copy()
             if 'video_frames' in st.session_state and st.session_state.video_frames:
                 last_user_message = messages_for_ai[-1]
@@ -937,6 +1142,18 @@ if len(st.session_state.messages) > 0 and st.session_state.messages[-1]['role'] 
                     all_images.extend(st.session_state.video_frames)
                     last_user_message = last_user_message.copy()
                     last_user_message['image'] = all_images
+                    
+                    # 如果有字幕，使用增强的提示
+                    if 'video_subtitles' in st.session_state and st.session_state.video_subtitles:
+                        subtitle_text = ""
+                        for subtitle in st.session_state.video_subtitles:
+                            lines = subtitle['content'].split('\n')
+                            text_lines = [line for line in lines if line and not line.startswith('WEBVTT') and not '-->' in line and not line.isdigit()]
+                            subtitle_text += " ".join(text_lines) + "\n"
+                        
+                        if subtitle_text.strip():
+                            last_user_message['content'] = f"{last_user_message['content']}\n\nVideo subtitles for context:\n{subtitle_text.strip()}"
+                    
                     messages_for_ai[-1] = last_user_message
             
             response = generate_response(messages_for_ai)
