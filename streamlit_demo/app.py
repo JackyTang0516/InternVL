@@ -28,6 +28,7 @@ from constants import LOGDIR, server_error_msg
 from library import Library
 from PIL import Image, ImageDraw, ImageFont
 from streamlit_image_select import image_select
+import imageio_ffmpeg
 
 custom_args = sys.argv[1:]
 parser = argparse.ArgumentParser()
@@ -79,7 +80,7 @@ def get_video_info(url):
     """获取视频信息而不下载"""
     try:
         cmd = [
-            'yt-dlp',
+            'py', '-3.10', '-m', 'yt_dlp',
             '--dump-json',
             '--no-playlist',
             url
@@ -191,7 +192,7 @@ def stream_video_frames(url):
         # 使用yt-dlp获取最佳视频流URL，然后用ffmpeg处理
         with st.spinner('Getting video stream URL...'):
             cmd = [
-                'yt-dlp',
+                'py', '-3.10', '-m', 'yt_dlp',
                 '-f', 'best[height<=720]',  # 选择720p以下的视频流
                 '--get-url',
                 '--no-playlist',
@@ -219,8 +220,10 @@ def stream_video_frames(url):
                 fps_filter = 'fps=1'  # 长视频：每秒1帧，不设置上限
                 max_frames = int(duration)  # 根据时长动态设置
             
+            # 获取ffmpeg的完整路径
+            ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
             cmd = [
-                'ffmpeg',
+                ffmpeg_path,
                 '-loglevel', 'error',  # 只显示错误信息，隐藏警告
                 '-i', stream_url,
                 '-vf', fps_filter,
