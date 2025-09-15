@@ -344,7 +344,7 @@ class ModelWorker:
         else:
             pixel_values = None
 
-        streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True, timeout=10)
+        streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True, timeout=600)
         generation_config = dict(
             num_beams=1,
             max_new_tokens=max_new_tokens,
