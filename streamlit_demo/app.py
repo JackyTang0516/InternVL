@@ -87,7 +87,8 @@ def get_video_info(url):
     """获取视频信息而不下载"""
     try:
         cmd = [
-            'C:\\Users\\PDLP-013-Eric\\Anaconda3\\envs\\video\\python.exe', '-m', 'yt_dlp',
+            # 'C:\\Users\\PDLP-013-Eric\\Anaconda3\\envs\\video\\python.exe', '-m', 'yt_dlp',
+            'python', '-m', 'yt_dlp',
             '--dump-json',
             '--no-playlist',
             url
@@ -199,7 +200,8 @@ def stream_video_frames(url):
         # 使用yt-dlp获取最佳视频流URL，然后用ffmpeg处理
         with st.spinner('Getting video stream URL...'):
             cmd = [
-                'C:\\Users\\PDLP-013-Eric\\Anaconda3\\envs\\video\\python.exe', '-m', 'yt_dlp',
+                # 'C:\\Users\\PDLP-013-Eric\\Anaconda3\\envs\\video\\python.exe', '-m', 'yt_dlp',
+                'python', '-m', 'yt_dlp',
                 '-f', 'best[height<=720]',  # 选择720p以下的视频流
                 '--get-url',
                 '--no-playlist',

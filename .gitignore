@@ -172,3 +172,7 @@ data_process/
 
 batchscript-*
 results/
+
+# 聊天记录文件
+*.conv.json
+streamlit_demo/logs/
