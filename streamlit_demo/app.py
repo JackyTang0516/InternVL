@@ -108,73 +108,100 @@ def get_video_info(url):
         raise Exception(f"获取视频信息时出错: {str(e)}")
 
 
-def extract_video_subtitles(url):
-    """提取视频字幕"""
+def parse_youtube_subtitle_json(json_content):
+    """解析YouTube字幕JSON格式，转换为可读文本"""
     try:
-        # 首先检查可用的字幕
-        cmd = [
-            'yt-dlp',
-            '--list-subs',
-            '--no-playlist',
-            url
-        ]
+        import json
+        data = json.loads(json_content)
         
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        # 提取所有文本片段
+        text_segments = []
+        for event in data.get('events', []):
+            if 'segs' in event:
+                for seg in event['segs']:
+                    if 'utf8' in seg:
+                        text_segments.append({
+                            'text': seg['utf8'],
+                            'start_ms': event.get('tStartMs', 0),
+                            'duration_ms': event.get('dDurationMs', 0)
+                        })
         
-        if result.returncode != 0:
-            return None
+        # 按时间排序并合并
+        text_segments.sort(key=lambda x: x['start_ms'])
         
-        # 检查是否有字幕可用
-        if "Available automatic captions" in result.stdout or "Available subtitles" in result.stdout:
-            # 有字幕可用，继续处理
-            pass
-        elif "has no subtitles" in result.stdout or "No subtitles" in result.stdout:
-            return None
-        else:
-            # 如果没有明确的字幕信息，也尝试提取
-            pass
+        # 转换为时间戳格式
+        result = []
+        current_text = ""
+        current_start = 0
         
-        # 提取字幕（优先选择英文和中文）
-        subtitle_cmd = [
-            'yt-dlp',
-            '--write-subs',
-            '--write-auto-subs',
-            '--sub-langs', 'en,zh,zh-cn,zh-tw',
-            '--sub-format', 'vtt',
-            '--skip-download',
-            '--no-playlist',
-            '--output', '/tmp/%(title)s.%(ext)s',
-            url
-        ]
+        for seg in text_segments:
+            if seg['text'] == '\n':
+                if current_text.strip():
+                    # 转换毫秒为时间格式
+                    start_time = f"{current_start//1000//60:02d}:{(current_start//1000)%60:02d}.{current_start%1000//10:02d}"
+                    result.append(f"{start_time} --> {current_text.strip()}")
+                current_text = ""
+                current_start = 0
+            else:
+                if not current_text:
+                    current_start = seg['start_ms']
+                current_text += seg['text']
         
-        result = subprocess.run(subtitle_cmd, capture_output=True, text=True, timeout=60)
+        # 处理最后一段
+        if current_text.strip():
+            start_time = f"{current_start//1000//60:02d}:{(current_start//1000)%60:02d}.{current_start%1000//10:02d}"
+            result.append(f"{start_time} --> {current_text.strip()}")
         
-        if result.returncode != 0:
-            return None
-        
-        # 查找生成的字幕文件
-        import glob
-        subtitle_files = glob.glob('/tmp/*.vtt')
-        
-        if not subtitle_files:
-            return None
-        
-        # 读取字幕内容
-        subtitles = []
-        for subtitle_file in subtitle_files:
-            try:
-                with open(subtitle_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    subtitles.append({
-                        'file': subtitle_file,
-                        'content': content
-                    })
-            except Exception as e:
-                continue
-        
-        return subtitles if subtitles else None
-        
+        return '\n'.join(result)
     except Exception as e:
+        return json_content  # 如果解析失败，返回原始内容
+
+
+def extract_video_subtitles(url):
+    """提取英文字幕文本（优先人工字幕，其次自动字幕），返回包含 content 的结构。"""
+    try:
+        info = get_video_info(url)
+        # 优先顺序：subtitles(人工) > automatic_captions(自动)
+        tracks_order = [('subtitles', 'subtitle'), ('automatic_captions', 'auto')]
+        # 英文语言优先列表，其次中文
+        lang_priority = ['en', 'en-US', 'en-GB', 'en-us', 'en-gb', 'zh', 'zh-CN', 'zh-cn', 'zh-TW', 'zh-tw']
+        import requests as _req
+
+        for kind_key, kind_name in tracks_order:
+            tracks = info.get(kind_key, {}) or {}
+            if not tracks:
+                continue
+            # 构造候选语言：按优先表排序，其次其它
+            langs_sorted = []
+            seen = set()
+            for lp in lang_priority:
+                if lp in tracks and lp not in seen:
+                    langs_sorted.append(lp)
+                    seen.add(lp)
+            for l in tracks.keys():
+                if l not in seen:
+                    langs_sorted.append(l)
+
+            for lang in langs_sorted:
+                entries = tracks.get(lang, []) or []
+                # 选择可用的条目（通常包含多质量，取第一个可访问的）
+                for ent in entries:
+                    url_ = ent.get('url')
+                    if not url_:
+                        continue
+                    try:
+                        r = _req.get(url_, timeout=30)
+                        if r.status_code == 200 and r.text.strip():
+                            return [{
+                                'lang': lang,
+                                'kind': kind_name,
+                                'content': r.text,
+                                'source_url': url_,
+                            }]
+                    except Exception:
+                        continue
+        return None
+    except Exception:
         return None
 
 
@@ -899,17 +926,36 @@ with st.sidebar:
                                     st.session_state.video_title = result['title']
                                 
                                 subtitle_info = f" and {len(result['subtitles'])} subtitle file(s)" if result['subtitles'] else ""
-                                st.success(f"Successfully processed video, extracted {len(result['frames'])} frames{subtitle_info}")
-                                
                                 # 显示字幕预览
                                 if result['subtitles']:
                                     with st.expander("📝 Subtitle Preview", expanded=True):
                                         for i, subtitle in enumerate(result['subtitles']):
                                             st.write(f"**Subtitle {i+1}:**")
-                                            # 显示完整字幕内容
-                                            st.text_area(f"Full Subtitle {i+1}:", subtitle['content'], height=150, key=f"preview_full_{i}")
-                                            
-                                            # Text Only部分已移除
+                                            # 解析字幕内容并显示纯文本
+                                            content = subtitle['content']
+                                            try:
+                                                # 尝试解析JSON格式字幕
+                                                import json
+                                                data = json.loads(content)
+                                                text_segments = []
+                                                for event in data.get('events', []):
+                                                    if 'segs' in event:
+                                                        for seg in event['segs']:
+                                                            if 'utf8' in seg and seg['utf8'].strip():
+                                                                text_segments.append(seg['utf8'].strip())
+                                                display_text = ' '.join(text_segments)
+                                            except:
+                                                # 如果不是JSON，按VTT格式处理
+                                                lines = content.split('\n')
+                                                buf = []
+                                                time = ''
+                                                for line in lines:
+                                                    if '-->' in line:
+                                                        time = line.strip()
+                                                    elif line and not line.startswith('WEBVTT') and not line.isdigit():
+                                                        buf.append(f"{time} | {line.strip()}")
+                                                display_text = "\n".join(buf)
+                                            st.text_area(f"Subtitle Text {i+1}:", display_text, height=150, key=f"preview_text_{i}")
                             else:
                                 st.error("Failed to process video")
                     else:
@@ -1014,10 +1060,31 @@ with st.sidebar:
                                     with st.expander("📝 字幕预览", expanded=True):
                                         for i, subtitle in enumerate(result['subtitles']):
                                             st.write(f"**字幕 {i+1}:**")
-                                            # 显示完整字幕内容
-                                            st.text_area(f"完整字幕 {i+1}:", subtitle['content'], height=150, key=f"preview_full_{i}")
-                                            
-                                            # 纯文本版本部分已移除
+                                            # 解析字幕内容并显示纯文本
+                                            content = subtitle['content']
+                                            try:
+                                                # 尝试解析JSON格式字幕
+                                                import json
+                                                data = json.loads(content)
+                                                text_segments = []
+                                                for event in data.get('events', []):
+                                                    if 'segs' in event:
+                                                        for seg in event['segs']:
+                                                            if 'utf8' in seg and seg['utf8'].strip():
+                                                                text_segments.append(seg['utf8'].strip())
+                                                display_text = ' '.join(text_segments)
+                                            except:
+                                                # 如果不是JSON，按VTT格式处理
+                                                lines = content.split('\n')
+                                                buf = []
+                                                time = ''
+                                                for line in lines:
+                                                    if '-->' in line:
+                                                        time = line.strip()
+                                                    elif line and not line.startswith('WEBVTT') and not line.isdigit():
+                                                        buf.append(f"{time} | {line.strip()}")
+                                                display_text = "\n".join(buf)
+                                            st.text_area(f"字幕文本 {i+1}:", display_text, height=150, key=f"preview_text_{i}")
                             else:
                                 st.error("处理视频失败")
                     else:
@@ -1208,8 +1275,8 @@ if len(st.session_state.messages) > 0 and st.session_state.messages[-1]['role'] 
                 last_user_message = messages_for_ai[-1]
                 has_user_images = 'image' in last_user_message and last_user_message['image'] and len(last_user_message['image']) > 0
                 if not has_user_images:
-                    # 仅在无上传图片时附加最多4帧视频
-                    limited_frames = st.session_state.video_frames[:4]
+                    # 无上传图片时附加全部视频帧（后续在 generate_response 中逐帧串行处理）
+                    limited_frames = st.session_state.video_frames
                     last_user_message = last_user_message.copy()
                     last_user_message['image'] = limited_frames
                     
