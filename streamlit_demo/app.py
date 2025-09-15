@@ -587,11 +587,27 @@ def generate_response(messages):
     headers = {'User-Agent': 'InternVL-Chat Client'}
     placeholder = st.empty()
 
-    # 若多张图：逐张串行处理并加时间戳；否则按原逻辑处理
+    # 若多张图：批量处理所有帧，汇总分析结果后一次性展示
     if len(images) > 1:
-        combined_output = ''
+        # 显示处理进度，但不显示具体分析内容
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        frame_analyses = []
+        total_frames = len(images)
+        
         for i, img in enumerate(images, start=1):
-            # 为当前图片构造消息：仅替换“最后一条用户消息”
+            # 更新进度显示
+            progress = i / total_frames
+            progress_bar.progress(progress)
+            if lan == 'English':
+                percentage = (i / total_frames) * 100
+                status_text.text(f"Analyzing frame {i}/{total_frames} ({percentage:.2f}%)...")
+            else:
+                percentage = (i / total_frames) * 100
+                status_text.text(f"正在分析第 {i}/{total_frames} 帧 ({percentage:.2f}%)...")
+
+            # 为当前图片构造消息：仅替换"最后一条用户消息"
             enforced_hint = "请只根据当前图像进行详细描述，不要推断视频整体信息。"
             last_user_content = messages[last_user_index]['content']
             final_user_content = f"{last_user_content}\n\n{enforced_hint}"
@@ -609,7 +625,6 @@ def generate_response(messages):
                 'repetition_penalty': float(repetition_penalty),
             }
 
-            prefix = f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 图像{i}: "
             current_output_text = ''
             try:
                 response = requests.post(
@@ -620,21 +635,103 @@ def generate_response(messages):
                         data = json.loads(chunk.decode())
                         if data['error_code'] == 0:
                             current_output_text = data['text']
-                            txt = prefix + current_output_text
-                            placeholder.markdown((combined_output + txt) + '▌')
                         else:
-                            err_txt = prefix + data['text'] + f" (error_code: {data['error_code']})"
-                            current_output_text = err_txt
-                            placeholder.markdown(combined_output + err_txt)
+                            current_output_text = data['text'] + f" (error_code: {data['error_code']})"
+                
                 # 数学符号清理
                 if ('\\[' in current_output_text and '\\]' in current_output_text) or ('\\(' in current_output_text and '\\)' in current_output_text):
                     current_output_text = current_output_text.replace('\\[', '$').replace('\\]', '$').replace('\\(', '$').replace('\\)', '$')
-                combined_output += prefix + current_output_text + '\n\n'
-                placeholder.markdown(combined_output)
+                
+                frame_analyses.append(current_output_text)
+                
             except requests.exceptions.RequestException:
-                combined_output += prefix + server_error_msg + '\n\n'
-                placeholder.markdown(combined_output)
-        return combined_output.strip()
+                frame_analyses.append(server_error_msg)
+        
+        # 清除进度显示
+        progress_bar.empty()
+        status_text.empty()
+        
+        # 显示正在汇总分析结果的提示
+        if lan == 'English':
+            placeholder.markdown("🔄 Summarizing analysis results from all frames...")
+        else:
+            placeholder.markdown("🔄 正在汇总所有帧的分析结果...")
+        
+        # 将所有帧分析结果发送给模型进行汇总
+        if lan == 'English':
+            summary_prompt = f"""Please provide a comprehensive video analysis summary based on the following analysis results from {total_frames} video frames.
+
+Frame analysis results:
+"""
+            for i, analysis in enumerate(frame_analyses, 1):
+                summary_prompt += f"\nFrame {i} analysis:\n{analysis}\n"
+
+            summary_prompt += f"""
+
+Please provide a comprehensive video analysis summary including:
+1. Overall content and theme of the video
+2. Changes in main scenes and objects
+3. Key events or action sequences
+4. Overall visual style and atmosphere
+
+Please answer in English, keep it concise and highlight key points."""
+        else:
+            summary_prompt = f"""请基于以下{total_frames}帧视频的分析结果，提供一个综合的视频分析总结。
+
+视频帧分析结果：
+"""
+            for i, analysis in enumerate(frame_analyses, 1):
+                summary_prompt += f"\n帧 {i} 分析：\n{analysis}\n"
+
+            summary_prompt += f"""
+
+请提供一个综合的视频分析总结，包括：
+1. 视频的整体内容和主题
+2. 主要场景和对象的变化
+3. 关键事件或动作序列
+4. 整体视觉风格和氛围
+
+请用中文回答，内容要简洁明了，突出重点。"""
+
+        summary_messages = base_messages[:-1] + [
+            {'role': 'user', 'content': summary_prompt}
+        ]
+        
+        summary_pload = {
+            'model': selected_model,
+            'prompt': summary_messages,
+            'temperature': float(temperature),
+            'top_p': float(top_p),
+            'max_new_tokens': max_length,
+            'max_input_tiles': max_input_tiles,
+            'repetition_penalty': float(repetition_penalty),
+        }
+        
+        final_summary = ''
+        try:
+            response = requests.post(
+                worker_addr + '/worker_generate_stream',
+                headers=headers, json=summary_pload, stream=True, timeout=600)
+            for chunk in response.iter_lines(decode_unicode=True, delimiter=b'\0'):
+                if chunk:
+                    data = json.loads(chunk.decode())
+                    if data['error_code'] == 0:
+                        final_summary = data['text']
+                        placeholder.markdown(final_summary + '▌')
+                    else:
+                        final_summary = data['text'] + f" (error_code: {data['error_code']})"
+                        placeholder.markdown(final_summary)
+            
+            # 数学符号清理
+            if ('\\[' in final_summary and '\\]' in final_summary) or ('\\(' in final_summary and '\\)' in final_summary):
+                final_summary = final_summary.replace('\\[', '$').replace('\\]', '$').replace('\\(', '$').replace('\\)', '$')
+                
+        except requests.exceptions.RequestException:
+            final_summary = server_error_msg
+            placeholder.markdown(final_summary)
+        
+        placeholder.markdown(final_summary)
+        return final_summary
     else:
         # 单图或无图：沿用原单请求逻辑
         # 把最后一条用户消息的图片（若有）加入
