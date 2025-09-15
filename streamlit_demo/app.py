@@ -35,7 +35,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--controller_url', type=str, default='http://localhost:40000', help='url of the controller')
 parser.add_argument('--sd_worker_url', type=str, default='http://0.0.0.0:40006', help='url of the stable diffusion worker')
 parser.add_argument('--chatgpt_worker_url', type=str, default='http://localhost:40002', help='url of the chatgpt worker')
-parser.add_argument('--max_image_limit', type=int, default=4, help='maximum number of images')
+parser.add_argument('--max_image_limit', type=int, default=10000, help='maximum number of images')
 parser.add_argument('--use_chatgpt', action='store_true', help='use ChatGPT instead of local model')
 args = parser.parse_args(custom_args)
 controller_url = args.controller_url
@@ -538,51 +538,118 @@ def save_chat_history():
 
 
 def generate_response(messages):
-    send_messages = [{'role': 'system', 'content': system_message_default + '\n\n' + persona_rec}]
-    for message in messages:
+    # 组装消息
+    base_messages = [{'role': 'system', 'content': system_message_default + '\n\n' + persona_rec}]
+    last_user_index = -1
+    for idx, message in enumerate(messages):
         if message['role'] == 'user':
-            user_message = {'role': 'user', 'content': message['content']}
-            if 'image' in message and len('image') > 0:
-                user_message['image'] = []
-                for image in message['image']:
-                    user_message['image'].append(pil_image_to_base64(image))
-            send_messages.append(user_message)
+            last_user_index = idx
+        # 先按原样拷贝，图片稍后处理
+        if message['role'] == 'user':
+            base_messages.append({'role': 'user', 'content': message['content']})
         else:
-            send_messages.append({'role': 'assistant', 'content': message['content']})
-    pload = {
-        'model': selected_model,
-        'prompt': send_messages,
-        'temperature': float(temperature),
-        'top_p': float(top_p),
-        'max_new_tokens': max_length,
-        'max_input_tiles': max_input_tiles,
-        'repetition_penalty': float(repetition_penalty),
-    }
+            base_messages.append({'role': 'assistant', 'content': message['content']})
+
+    images = []
+    if last_user_index != -1 and 'image' in messages[last_user_index] and messages[last_user_index]['image']:
+        images = messages[last_user_index]['image']
+
     worker_addr = get_selected_worker_ip()
     headers = {'User-Agent': 'InternVL-Chat Client'}
-    placeholder, output = st.empty(), ''
-    try:
-        response = requests.post(worker_addr + '/worker_generate_stream',
-                                 headers=headers, json=pload, stream=True, timeout=10)
-        for chunk in response.iter_lines(decode_unicode=True, delimiter=b'\0'):
-            if chunk:
-                data = json.loads(chunk.decode())
-                if data['error_code'] == 0:
-                    output = data['text']
-                    # Phi3-3.8B will produce abnormal `�` output
-                    if '4B' in selected_model and '�' in output[-2:]:
-                        output = output.replace('�', '')
-                        break
-                    placeholder.markdown(output + '▌')
-                else:
-                    output = data['text'] + f" (error_code: {data['error_code']})"
-                    placeholder.markdown(output)
-        if ('\[' in output and '\]' in output) or ('\(' in output and '\)' in output):
-            output = output.replace('\[', '$').replace('\]', '$').replace('\(', '$').replace('\)', '$')
-        placeholder.markdown(output)
-    except requests.exceptions.RequestException as e:
-        placeholder.markdown(server_error_msg)
-    return output
+    placeholder = st.empty()
+
+    # 若多张图：逐张串行处理并加时间戳；否则按原逻辑处理
+    if len(images) > 1:
+        combined_output = ''
+        for i, img in enumerate(images, start=1):
+            # 为当前图片构造消息：仅替换“最后一条用户消息”
+            enforced_hint = "请只根据当前图像进行详细描述，不要推断视频整体信息。"
+            last_user_content = messages[last_user_index]['content']
+            final_user_content = f"{last_user_content}\n\n{enforced_hint}"
+            per_image_messages = base_messages[:-1] + [
+                {'role': 'user', 'content': final_user_content, 'image': [pil_image_to_base64(img)]}
+            ]
+
+            pload = {
+                'model': selected_model,
+                'prompt': per_image_messages,
+                'temperature': float(temperature),
+                'top_p': float(top_p),
+                'max_new_tokens': max_length,
+                'max_input_tiles': max_input_tiles,
+                'repetition_penalty': float(repetition_penalty),
+            }
+
+            prefix = f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 图像{i}: "
+            current_output_text = ''
+            try:
+                response = requests.post(
+                    worker_addr + '/worker_generate_stream',
+                    headers=headers, json=pload, stream=True, timeout=600)
+                for chunk in response.iter_lines(decode_unicode=True, delimiter=b'\0'):
+                    if chunk:
+                        data = json.loads(chunk.decode())
+                        if data['error_code'] == 0:
+                            current_output_text = data['text']
+                            txt = prefix + current_output_text
+                            placeholder.markdown((combined_output + txt) + '▌')
+                        else:
+                            err_txt = prefix + data['text'] + f" (error_code: {data['error_code']})"
+                            current_output_text = err_txt
+                            placeholder.markdown(combined_output + err_txt)
+                # 数学符号清理
+                if ('\\[' in current_output_text and '\\]' in current_output_text) or ('\\(' in current_output_text and '\\)' in current_output_text):
+                    current_output_text = current_output_text.replace('\\[', '$').replace('\\]', '$').replace('\\(', '$').replace('\\)', '$')
+                combined_output += prefix + current_output_text + '\n\n'
+                placeholder.markdown(combined_output)
+            except requests.exceptions.RequestException:
+                combined_output += prefix + server_error_msg + '\n\n'
+                placeholder.markdown(combined_output)
+        return combined_output.strip()
+    else:
+        # 单图或无图：沿用原单请求逻辑
+        # 把最后一条用户消息的图片（若有）加入
+        enforced_hint = "请只根据当前图像进行详细描述，不要推断视频整体信息。"
+        last_user_content = messages[last_user_index]['content'] if last_user_index != -1 else ''
+        final_user_content = f"{last_user_content}\n\n{enforced_hint}" if last_user_index != -1 else ''
+        if len(images) == 1 and last_user_index != -1:
+            send_messages = base_messages[:-1] + [
+                {'role': 'user', 'content': final_user_content, 'image': [pil_image_to_base64(images[0])]}
+            ]
+        else:
+            send_messages = base_messages
+
+        pload = {
+            'model': selected_model,
+            'prompt': send_messages,
+            'temperature': float(temperature),
+            'top_p': float(top_p),
+            'max_new_tokens': max_length,
+            'max_input_tiles': max_input_tiles,
+            'repetition_penalty': float(repetition_penalty),
+        }
+        output = ''
+        try:
+            response = requests.post(worker_addr + '/worker_generate_stream',
+                                     headers=headers, json=pload, stream=True, timeout=600)
+            for chunk in response.iter_lines(decode_unicode=True, delimiter=b'\0'):
+                if chunk:
+                    data = json.loads(chunk.decode())
+                    if data['error_code'] == 0:
+                        output = data['text']
+                        if '4B' in selected_model and '�' in output[-2:]:
+                            output = output.replace('�', '')
+                            break
+                        placeholder.markdown(output + '▌')
+                    else:
+                        output = data['text'] + f" (error_code: {data['error_code']})"
+                        placeholder.markdown(output)
+            if ('\\[' in output and '\\]' in output) or ('\\(' in output and '\\)' in output):
+                output = output.replace('\\[', '$').replace('\\]', '$').replace('\\(', '$').replace('\\)', '$')
+            placeholder.markdown(output)
+        except requests.exceptions.RequestException:
+            placeholder.markdown(server_error_msg)
+        return output
 
 
 def pil_image_to_base64(image):
@@ -1133,28 +1200,29 @@ if len(st.session_state.messages) > 0 and st.session_state.messages[-1]['role'] 
             if not prompt:
                 prompt = st.session_state.messages[-1]['content']
             
-            # 临时修改最后一条用户消息，添加视频帧和字幕用于AI处理
+            # 临时修改最后一条用户消息：仅在没有上传图片时，才附加少量视频帧与截断字幕
             messages_for_ai = st.session_state.messages.copy()
             if 'video_frames' in st.session_state and st.session_state.video_frames:
                 last_user_message = messages_for_ai[-1]
-                if 'image' in last_user_message:
-                    # 创建包含视频帧的图像列表副本
-                    all_images = last_user_message['image'].copy()
-                    all_images.extend(st.session_state.video_frames)
+                has_user_images = 'image' in last_user_message and last_user_message['image'] and len(last_user_message['image']) > 0
+                if not has_user_images:
+                    # 仅在无上传图片时附加最多4帧视频
+                    limited_frames = st.session_state.video_frames[:4]
                     last_user_message = last_user_message.copy()
-                    last_user_message['image'] = all_images
+                    last_user_message['image'] = limited_frames
                     
-                    # 如果有字幕，使用增强的提示
+                    # 如果有字幕，添加截断后的纯文本（最多2000字符）
                     if 'video_subtitles' in st.session_state and st.session_state.video_subtitles:
                         subtitle_text = ""
                         for subtitle in st.session_state.video_subtitles:
                             lines = subtitle['content'].split('\n')
                             text_lines = [line for line in lines if line and not line.startswith('WEBVTT') and not '-->' in line and not line.isdigit()]
                             subtitle_text += " ".join(text_lines) + "\n"
-                        
-                        if subtitle_text.strip():
-                            last_user_message['content'] = f"{last_user_message['content']}\n\nVideo subtitles for context:\n{subtitle_text.strip()}"
-                    
+                        subtitle_text = subtitle_text.strip()
+                        if len(subtitle_text) > 2000:
+                            subtitle_text = subtitle_text[:2000] + '...'
+                        if subtitle_text:
+                            last_user_message['content'] = f"{last_user_message['content']}\n\nVideo subtitles for context:\n{subtitle_text}"
                     messages_for_ai[-1] = last_user_message
             
             response = generate_response(messages_for_ai)

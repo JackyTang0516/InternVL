@@ -68,7 +68,7 @@ pload = {
 }
 headers = {'User-Agent': 'InternVL-Chat Client'}
 response = requests.post(worker_addr + '/worker_generate_stream',
-                         headers=headers, json=pload, stream=True, timeout=10)
+                         headers=headers, json=pload, stream=True, timeout=600)
 for chunk in response.iter_lines(decode_unicode=False, delimiter=b'\0'):
     if chunk:
         data = json.loads(chunk.decode())
