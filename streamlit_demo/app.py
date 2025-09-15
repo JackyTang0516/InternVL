@@ -913,12 +913,17 @@ with st.sidebar:
                 if video_url and video_url.strip():
                     if is_video_url(video_url.strip()):
                         with st.spinner('Processing video...'):
+                            # 清空上一次的视频记录
+                            st.session_state.video_frames = []
+                            if 'video_subtitles' in st.session_state:
+                                del st.session_state.video_subtitles
+                            if 'video_title' in st.session_state:
+                                del st.session_state.video_title
+                            
                             result = stream_video_frames(video_url.strip())
                             if result and isinstance(result, dict) and result['frames']:
                                 # 将视频帧添加到session state
-                                if 'video_frames' not in st.session_state:
-                                    st.session_state.video_frames = []
-                                st.session_state.video_frames.extend(result['frames'])
+                                st.session_state.video_frames = result['frames']
                                 
                                 # 存储字幕信息
                                 if result['subtitles']:
@@ -1040,12 +1045,17 @@ with st.sidebar:
                 if video_url and video_url.strip():
                     if is_video_url(video_url.strip()):
                         with st.spinner('Processing video...'):
+                            # 清空上一次的视频记录
+                            st.session_state.video_frames = []
+                            if 'video_subtitles' in st.session_state:
+                                del st.session_state.video_subtitles
+                            if 'video_title' in st.session_state:
+                                del st.session_state.video_title
+                            
                             result = stream_video_frames(video_url.strip())
                             if result and isinstance(result, dict) and result['frames']:
                                 # 将视频帧添加到session state
-                                if 'video_frames' not in st.session_state:
-                                    st.session_state.video_frames = []
-                                st.session_state.video_frames.extend(result['frames'])
+                                st.session_state.video_frames = result['frames']
                                 
                                 # 存储字幕信息
                                 if result['subtitles']:
