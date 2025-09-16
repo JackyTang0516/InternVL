@@ -959,7 +959,8 @@ if 'uploader_key' not in st.session_state:
 
 system_message_default = '我是 Pac-Dent MediaMind，一个专业的AI媒体分析和理解平台，专注于提供高质量的媒体内容分析和智能处理服务。'
 
-system_message_editable = '请尽可能详细地回答用户的问题。'
+system_message_editable = 'You are an AI system that summarizes video content based on visual and textual input. ### Task: You will be given: - A series of key video frames (images), representing important scenes from a video. - The corresponding subtitles or transcript (in English or translated to English). Analyze both the visual and textual content together to generate an accurate and concise summary of the video\'s content. Identify key themes, events, people, and topics. ### Instructions: 1. Carefully examine the visual content of the images to understand scenes, people, objects, and context. 2. Read and analyze the subtitles to capture dialogue, narration, and progression. 3. Combine both modalities to understand the full message of the video. 4. Avoid copying subtitles word-for-word. Instead, paraphrase and synthesize meaningfully. 5. Output a summary in 1–2 paragraphs, or bullet points if the video covers multiple segments. 6. Use a neutral and informative tone. ### Output: Return only the summary. Do not include image captions or metadata.'
+
 
 # Replicate Credentials
 with st.sidebar:
