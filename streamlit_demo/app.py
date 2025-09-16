@@ -629,7 +629,7 @@ def generate_response(messages):
             try:
                 response = requests.post(
                     worker_addr + '/worker_generate_stream',
-                    headers=headers, json=pload, stream=True, timeout=600)
+                    headers=headers, json=pload, stream=True, timeout=3600)
                 for chunk in response.iter_lines(decode_unicode=True, delimiter=b'\0'):
                     if chunk:
                         data = json.loads(chunk.decode())
@@ -711,7 +711,7 @@ Please answer in English, keep it concise and highlight key points."""
         try:
             response = requests.post(
                 worker_addr + '/worker_generate_stream',
-                headers=headers, json=summary_pload, stream=True, timeout=600)
+                headers=headers, json=summary_pload, stream=True, timeout=3600)
             for chunk in response.iter_lines(decode_unicode=True, delimiter=b'\0'):
                 if chunk:
                     data = json.loads(chunk.decode())
@@ -757,7 +757,7 @@ Please answer in English, keep it concise and highlight key points."""
         output = ''
         try:
             response = requests.post(worker_addr + '/worker_generate_stream',
-                                     headers=headers, json=pload, stream=True, timeout=600)
+                                     headers=headers, json=pload, stream=True, timeout=3600)
             for chunk in response.iter_lines(decode_unicode=True, delimiter=b'\0'):
                 if chunk:
                     data = json.loads(chunk.decode())
@@ -1073,7 +1073,7 @@ with st.sidebar:
         upload_image_preview = st.empty()
         uploaded_files = st.file_uploader('Upload files', accept_multiple_files=True,
                                           type=['png', 'jpg', 'jpeg', 'webp', 'mp4', 'mov', 'avi', 'mkv', 'webm'],
-                                          help=f'你可以上传多张图像（最多{max_image_limit}张）或者一个视频。',
+                                          help = f'You can upload multiple images (up to {max_image_limit}) or a single video.',
                                           key=f'uploader_{st.session_state.uploader_key}',
                                           on_change=st.rerun)
         uploaded_pil_images, save_filenames = load_upload_file_and_show()
