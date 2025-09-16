@@ -27,7 +27,7 @@ import streamlit as st
 from constants import LOGDIR, server_error_msg
 from library import Library
 from PIL import Image, ImageDraw, ImageFont
-from streamlit_image_select import image_select
+# from streamlit_image_select import image_select  # 已移除示例图片功能
 import imageio_ffmpeg
 
 custom_args = sys.argv[1:]
@@ -786,7 +786,6 @@ def pil_image_to_base64(image):
 
 def clear_chat_history():
     st.session_state.messages = []
-    st.session_state['image_select'] = -1
     # 清除视频帧和字幕
     if 'video_frames' in st.session_state:
         st.session_state.video_frames = []
@@ -965,28 +964,22 @@ system_message_editable = '请尽可能详细地回答用户的问题。'
 # Replicate Credentials
 with st.sidebar:
     model_list = get_model_list()
-    # "[![Open in GitHub](https://github.com/codespaces/badge.svg)](https://github.com/OpenGVLab/InternVL)"
-    lan = st.selectbox('#### Language / 语言', ['English', '中文'], on_change=st.rerun,
-                       help='This is only for switching the UI language. 这仅用于切换UI界面的语言。')
+    # 固定使用中文界面，隐藏语言选择
+    lan = 'English'
     if lan == 'English':
         # st.logo(logo_code, link='https://github.com/OpenGVLab/InternVL', icon_image=logo_code)
-        st.subheader('Models and parameters')
-        selected_model = st.sidebar.selectbox('Choose a Pac-Dent MediaMind model', model_list, key='selected_model',
-                                              on_change=clear_chat_history,
-                                              help='Select the AI model for media analysis and understanding.')
+        # 模型选择已隐藏，使用默认模型
+        selected_model = model_list[0] if model_list else 'default'
         with st.expander('🤖 System Prompt'):
             persona_rec = st.text_area('System Prompt', value=system_message_editable,
                                        help='System prompt is a pre-defined message used to instruct the assistant at the beginning of a conversation.',
                                        height=200)
-        with st.expander('🔥 Advanced Options'):
-            temperature = st.slider('temperature', min_value=0.0, max_value=1.0, value=0.7, step=0.1)
-            top_p = st.slider('top_p', min_value=0.0, max_value=1.0, value=0.95, step=0.05)
-            repetition_penalty = st.slider('repetition_penalty', min_value=1.0, max_value=1.5, value=1.1, step=0.02)
-            max_length = st.slider('max_new_token', min_value=0, max_value=4096, value=1024, step=128)
-            max_input_tiles = st.slider('max_input_tiles (control image resolution)', min_value=1, max_value=24,
-                                        value=12, step=1)
-            st.info('🎥 Video frame extraction strategy: The system will automatically determine the number of frames to extract based on video length and content')
-            st.caption('• Short videos (≤50 frames): Extract all frames\n• Medium videos: Smart extraction based on quota\n• Long videos: Uniform sampling to maintain representativeness')
+        # Advanced Options 已隐藏，使用默认参数
+        temperature = 0.7
+        top_p = 0.95
+        repetition_penalty = 1.1
+        max_length = 1024
+        max_input_tiles = 12
         # 视频链接输入
         st.subheader('🎥 Enter a video link')
         # 初始化session state
@@ -1102,22 +1095,18 @@ with st.sidebar:
         #             else:
         #                 st.write("No text content found in this subtitle file.")
     else:
-        st.subheader('模型和参数')
-        selected_model = st.sidebar.selectbox('选择一个 Pac-Dent MediaMind 模型', model_list, key='selected_model',
-                                              on_change=clear_chat_history,
-                                              help='选择用于媒体分析和理解的AI模型。')
+        # 模型选择已隐藏，使用默认模型
+        selected_model = model_list[0] if model_list else 'default'
         with st.expander('🤖 系统提示'):
             persona_rec = st.text_area('系统提示', value=system_message_editable,
                                        help='系统提示是在对话开始时用于指示助手的预定义消息。',
                                        height=200)
-        with st.expander('🔥 高级选项'):
-            temperature = st.slider('temperature', min_value=0.0, max_value=1.0, value=0.7, step=0.1)
-            top_p = st.slider('top_p', min_value=0.0, max_value=1.0, value=0.95, step=0.05)
-            repetition_penalty = st.slider('重复惩罚', min_value=1.0, max_value=1.5, value=1.1, step=0.02)
-            max_length = st.slider('最大输出长度', min_value=0, max_value=4096, value=1024, step=128)
-            max_input_tiles = st.slider('最大图像块数 (控制图像分辨率)', min_value=1, max_value=24, value=12, step=1)
-            st.info('🎥 Video frame extraction strategy: The system will automatically determine the number of frames to extract based on video length and content')
-            st.caption('• Short videos (≤50 frames): Extract all frames\n• Medium videos: Smart extraction based on quota\n• Long videos: Uniform sampling to maintain representativeness')
+        # 高级选项已隐藏，使用默认参数
+        temperature = 0.7
+        top_p = 0.95
+        repetition_penalty = 1.1
+        max_length = 1024
+        max_input_tiles = 12
         
         # 视频链接输入
         st.subheader('🎥 或输入视频链接')
@@ -1250,57 +1239,28 @@ st.markdown("""
 
 if lan == 'English':
     st.markdown('<div class="logo-container">' + logo_code + '</div>', unsafe_allow_html=True)
-    st.caption('An AI-Powered Media Analysis and Understanding Platform')
+    st.markdown('''
+        <div style="text-align:center;">
+            <p style="font-size:20px; color:gray;">An AI-Powered Media Analysis and Understanding Platform</p>
+        </div>
+    ''', unsafe_allow_html=True)
 else:
     st.markdown('<div class="logo-container">' + logo_code + '</div>', unsafe_allow_html=True)
-    st.caption('AI驱动的媒体分析和理解平台')
+    st.markdown('''
+        <div style="text-align:center;">
+            <p style="font-size:20px; color:gray;">AI驱动的媒体分析和理解平台</p>
+        </div>
+    ''', unsafe_allow_html=True)
+
 
 # Store LLM generated responses
 if 'messages' not in st.session_state.keys():
     clear_chat_history()
 
+# 移除示例图片展示区域
 gallery_placeholder = st.empty()
-with gallery_placeholder.container():
-    examples = ['gallery/prod_9.jpg', 'gallery/astro_on_unicorn.png',
-                'gallery/prod_12.png', 'gallery/prod_en_17.png',
-                'gallery/prod_4.png', 'gallery/cheetah.png', 'gallery/prod_1.jpeg']
-    images = [Image.open(image) for image in examples]
-    if lan == 'English':
-        captions = ["What's at the far end of the image?",
-                    'Could you help me draw a picture like this one?',
-                    'What are the consequences of the easy decisions shown in this image?',
-                    "I'm on a diet, but I really want to eat them.",
-                    'Is this a real plant? Analyze the reasons.',
-                    'Detect the <ref>the middle leopard</ref> in the image with its bounding box.',
-                    'Please identify and label all objects in the following image.']
-    else:
-        captions = ['画面最远处是什么?',
-                    '请画一张类似这样的画',
-                    '这张图上 easy decisions 导致了什么后果?',
-                    '我在减肥，但我真的很想吃这个。',
-                    '这是真的植物吗？分析原因',
-                    '在以下图像中进行目标检测，并标出所有物体。',
-                    '这幅图的氛围如何？']
-    img_idx = image_select(
-        label='',
-        images=images,
-        captions=captions,
-        use_container_width=True,
-        index=-1,
-        return_value='index',
-        key='image_select'
-    )
-    # if lan == 'English':
-        # st.caption(
-        #     'Note: For non-commercial research use only. AI responses may contain errors. Users should not spread or allow others to spread hate speech, violence, pornography, or fraud-related harmful information.')
-    # else:
-        # st.caption('注意：仅限非商业研究使用。用户应不传播或允许他人传播仇恨言论、暴力、色情内容或与欺诈相关的有害信息。')
-    if img_idx != -1 and len(st.session_state.messages) == 0 and selected_model is not None:
-        gallery_placeholder.empty()
-        st.session_state.messages.append({'role': 'user', 'content': captions[img_idx], 'image': [images[img_idx]],
-                                          'filenames': [examples[img_idx]]})
-        st.rerun()  # Fixed an issue where examples were not emptied
 
+# 当有聊天消息时，清空占位符
 if len(st.session_state.messages) > 0:
     gallery_placeholder.empty()
 
@@ -1338,7 +1298,6 @@ alias_instructions = {
 
 if prompt:
     prompt = alias_instructions[prompt] if prompt in alias_instructions else prompt
-    gallery_placeholder.empty()
     image_list = uploaded_pil_images
     
     # 将视频帧添加到发送给AI的图像列表中，但不显示在聊天记录中
