@@ -951,7 +951,9 @@ logo_code = """
 # App title
 st.set_page_config(
     page_title='Pac-Dent MediaMind',
-    page_icon='static/pac-dent-logo.png'
+    page_icon='static/pac-dent-logo.png',
+    layout='wide',
+    initial_sidebar_state='expanded'
 )
 
 if 'uploader_key' not in st.session_state:
@@ -971,6 +973,10 @@ with st.sidebar:
         # st.logo(logo_code, link='https://github.com/OpenGVLab/InternVL', icon_image=logo_code)
         # 模型选择已隐藏，使用默认模型
         selected_model = model_list[0] if model_list else 'default'
+        
+        # 添加自定义代理标题
+        st.markdown("### 🎯 Customize Your Agent Here!")
+        
         with st.expander('🤖 System Prompt'):
             persona_rec = st.text_area('System Prompt', value=system_message_editable,
                                        help='System prompt is a pre-defined message used to instruct the assistant at the beginning of a conversation.',
@@ -1098,6 +1104,10 @@ with st.sidebar:
     else:
         # 模型选择已隐藏，使用默认模型
         selected_model = model_list[0] if model_list else 'default'
+        
+        # 添加自定义代理标题
+        st.markdown("### 🎯 Customize Your Agent Here!")
+        
         with st.expander('🤖 系统提示'):
             persona_rec = st.text_area('系统提示', value=system_message_editable,
                                        help='系统提示是在对话开始时用于指示助手的预定义消息。',
@@ -1226,7 +1236,7 @@ with st.sidebar:
         #             else:
         #                 st.write("此字幕文件中未找到文本内容。")
 
-# Logo styling
+# Logo styling and hide menu
 st.markdown("""
 <style>
 .logo-container {
@@ -1235,6 +1245,11 @@ st.markdown("""
     align-items: center;
     margin: 20px 0;
 }
+
+/* Hide the Streamlit menu button (three dots) */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
